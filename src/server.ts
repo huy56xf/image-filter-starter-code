@@ -32,7 +32,7 @@ import {filterImageFromURL, deleteLocalFiles} from './util/util';
                        );   
                             }
         ).catch(function(err){
-            res.status(400).send('Error:' + err );
+            res.status(501).send('Error:' + err );
                               });  
 
           }
