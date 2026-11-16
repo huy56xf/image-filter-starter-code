@@ -32,8 +32,24 @@
             <input id="fileInput" type="file" accept="image/*" multiple hidden>
             Chọn từ thư viện
           </label>
+          <button class="btn" id="btnLive" hidden>Quét trực tiếp</button>
         </div>
+        <p id="pickMsg" class="hint warn" hidden></p>
         <p class="hint">Hoặc kéo-thả / dán (Ctrl+V) ảnh vào đây. Mẹo: đặt giấy trên nền tối, chụp đủ 4 góc.</p>
+      </div>
+    </section>
+
+    <!-- Quét trực tiếp: vẽ khung realtime trên video camera -->
+    <section id="stepLive" class="step">
+      <div id="liveWrap" class="stage live">
+        <video id="liveVideo" playsinline muted autoplay></video>
+        <canvas id="liveOverlay"></canvas>
+        <div id="liveHint" class="live-hint">Đang mở camera…</div>
+      </div>
+      <div class="toolbar">
+        <button class="btn" id="btnLiveCancel">Huỷ</button>
+        <label class="btn" for="chkAuto"><input type="checkbox" id="chkAuto" checked> Tự chụp</label>
+        <button class="btn primary" id="btnShutter">Chụp</button>
       </div>
     </section>
 

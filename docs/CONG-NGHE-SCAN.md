@@ -48,6 +48,36 @@ và cách ứng dụng trong repo này làm lại quy trình đó (`public/js/sc
 Nếu điểm tin cậy thấp, ứng dụng trả về khung mặc định và người dùng **kéo 4 góc** (có kính lúp phóng to)
 — đây cũng là cách CamScanner xử lý trường hợp khó.
 
+### 2.1 Các họ thuật toán tìm khung trang giấy
+
+| Cách tiếp cận | Ý tưởng | Mạnh | Yếu |
+|---|---|---|---|
+| Canny + contour + `approxPolyDP` (OpenCV kinh điển) | Tìm đường viền khép kín, xấp xỉ đa giác 4 đỉnh | Nhanh, đơn giản | Gãy khi mép đứt đoạn, nền rối, bị che góc |
+| Biến đổi Hough / LSD (Line Segment Detector) | Tìm đường thẳng dài, ghép 4 đường thành tứ giác | Chịu được mép đứt, góc bị che/lọt khung | Nhiều tổ hợp; dễ bắt nhầm khung bảng, mép bàn |
+| Phân vùng (Otsu, GrabCut, closing hình thái) | Giấy là vùng sáng lớn, đồng màu | Tốt khi giấy tương phản với nền | Giấy trắng trên nền trắng |
+| Học sâu – biên (HED, mạng phát hiện biên của Dropbox) | Mạng nơ-ron chỉ giữ lại biên "mép tài liệu", bỏ biên chữ | Rất bền, chạy realtime trên điện thoại | Cần dữ liệu huấn luyện + mô hình |
+| Học sâu – phân vùng / điểm góc (U-Net, DocAligner, heatmap 4 góc) | Dự đoán mặt nạ trang hoặc trực tiếp 4 góc | Tốt nhất với giấy chồng giấy, thiếu sáng | Mô hình vài MB, cần WebGL/WASM |
+
+CamScanner, Adobe Scan, Microsoft Lens… dùng học sâu cho bước này và **chạy liên tục trên luồng camera**:
+khung được vẽ realtime, làm mượt theo thời gian, và tự chụp khi khung đứng yên.
+
+### 2.2 Ứng dụng này làm gì
+
+Kết hợp các cách cổ điển và chấm điểm chung:
+
+- Hai nhánh ảnh: ảnh gốc, và **ảnh đã xoá chữ** bằng phép đóng (lọc max rồi lọc min, bán kính ~1% ảnh).
+  Phép đóng xoá mọi nét tối mảnh (chữ, đường kẻ, dấu mộc) nhưng giữ nguyên mép tờ giấy, nên biên mờ của
+  mép giấy không bị chữ "lấn át" khi tính ngưỡng.
+- Ứng viên từ: vùng kín, thành phần biên, Otsu, Hough (trên cả hai nhánh) và cả **mép khung hình**.
+- Chấm điểm cạnh: độ bám biên cùng dấu, trừ điểm cạnh là "đường kẻ trên giấy", cạnh trùng mép ảnh chỉ được
+  điểm khi dải sát mép trông như giấy.
+- **Dự phòng theo nội dung** khi mép giấy gần như vô hình (giấy trắng trên chồng giấy trắng, thiếu sáng):
+  dùng khung bảng/khối kẻ rõ nhất để biết phối cảnh, dàn phẳng các điểm mực, lấy khung bao nội dung + lề rồi
+  chiếu ngược lại → khung vẫn đúng hướng nghiêng và ôm sát trang thay vì lấy cả ảnh.
+- **Quét trực tiếp**: mỗi khung hình video thu nhỏ còn 320px, nhận diện trong Web Worker (không giật giao diện),
+  khung hiển thị trượt mượt về kết quả mới, đổi màu khi đứng yên; giữ yên 1,2 giây thì tự chụp ở độ phân giải
+  đầy đủ và nhận diện lại chính xác hơn.
+
 ## 3. Nắn phối cảnh (perspective transform)
 
 Ảnh của một mặt phẳng chụp từ góc bất kỳ liên hệ với ảnh chụp thẳng qua **ma trận homography** H (3×3, 8 bậc tự do):

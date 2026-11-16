@@ -16,10 +16,14 @@ npm run dev          # http://localhost:8082
 npm test             # kiểm thử lõi xử lý ảnh
 ```
 
+Thử trên điện thoại qua HTTPS (để dùng camera trực tiếp): `cloudflared tunnel --url http://localhost:8082`
+rồi mở link `https://….trycloudflare.com` được in ra.
+
 Mở `http://localhost:8082` (trên điện thoại cùng mạng LAN: `http://<ip-máy>:8082`; muốn mở camera trực tiếp
 trên điện thoại cần HTTPS hoặc dùng nút "Chụp ảnh" — nút này mở app camera qua `capture="environment"`).
 
-1. **Chụp ảnh / Chọn từ thư viện** (hoặc kéo-thả, dán Ctrl+V; chọn nhiều ảnh để quét liên tiếp).
+1. **Quét trực tiếp** (khung tờ giấy vẽ realtime trên camera, giữ yên để tự chụp — cần HTTPS hoặc localhost),
+   hoặc **Chụp ảnh / Chọn từ thư viện** (kéo-thả, dán Ctrl+V; chọn nhiều ảnh để quét liên tiếp).
 2. Kiểm tra khung xanh quanh tờ giấy, kéo các góc nếu cần (có kính lúp phóng to).
 3. **Quét** → chọn bộ lọc: *Màu nét*, *Xám*, *Đen trắng*, *Gốc*; xoay trái/phải.
 4. **Tải JPG/PNG** hoặc **Thêm vào tài liệu** → sắp xếp trang → **Xuất PDF**.

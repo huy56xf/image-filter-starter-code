@@ -24,7 +24,8 @@
   // Điều hướng giữa các bước
   // ---------------------------------------------------------------------------
   function show(step) {
-    ['stepPick', 'stepCrop', 'stepResult', 'stepPages'].forEach(function (id) {
+    if (step !== 'stepLive') stopLive();
+    ['stepPick', 'stepLive', 'stepCrop', 'stepResult', 'stepPages'].forEach(function (id) {
       $(id).classList.toggle('active', id === step);
     });
     if (step === 'stepCrop') requestAnimationFrame(layoutCrop);
@@ -56,32 +57,183 @@
     openFile(list[0]);
   }
 
+  /** Nạp nguồn ảnh (ảnh tải lên hoặc khung hình camera) làm ảnh làm việc. */
+  function setSource(drawable, w, h) {
+    var s = Math.min(1, WORK_MAX / Math.max(w, h));
+    var c = document.createElement('canvas');
+    c.width = Math.round(w * s); c.height = Math.round(h * s);
+    var ctx = c.getContext('2d');
+    ctx.drawImage(drawable, 0, 0, c.width, c.height);
+    var id = ctx.getImageData(0, 0, c.width, c.height);
+    state.src = { data: id.data, width: id.width, height: id.height };
+    state.srcCanvas = c;
+    state.rotation = 0;
+    state.warped = null;
+    return s;
+  }
+
   function openFile(file) {
     loadBitmap(file).then(function (bmp) {
-      var w = bmp.width, h = bmp.height, s = Math.min(1, WORK_MAX / Math.max(w, h));
-      var c = document.createElement('canvas');
-      c.width = Math.round(w * s); c.height = Math.round(h * s);
-      var ctx = c.getContext('2d');
-      ctx.drawImage(bmp, 0, 0, c.width, c.height);
-      var id = ctx.getImageData(0, 0, c.width, c.height);
-      state.src = { data: id.data, width: id.width, height: id.height };
-      state.srcCanvas = c;
-      state.rotation = 0;
-      state.warped = null;
+      setSource(bmp, bmp.width, bmp.height);
       runDetection();
       show('stepCrop');
     }).catch(function (e) { alert(e.message); });
   }
 
-  function runDetection() {
+  function runDetection(fallbackCorners) {
     var t = performance.now();
     var det = DocScanner.detectDocument(state.src);
+    if (!det.found && fallbackCorners) det = { corners: fallbackCorners, found: true, method: 'live' };
     state.detection = det;
     state.corners = det.corners;
     $('detectInfo').textContent = det.found
       ? 'Đã tìm thấy tờ giấy (' + Math.round(performance.now() - t) + ' ms). Kéo các góc nếu cần chỉnh.'
-      : 'Không chắc chắn vị trí tờ giấy — hãy kéo 4 góc vào đúng mép giấy.';
+      : det.method === 'content'
+        ? 'Mép giấy không rõ — đã ước lượng khung theo nội dung, hãy kiểm tra 4 góc.'
+        : 'Không chắc chắn vị trí tờ giấy — hãy kéo 4 góc vào đúng mép giấy.';
     drawCrop();
+  }
+
+  // ---------------------------------------------------------------------------
+  // Quét trực tiếp: nhận diện trên khung hình camera, vẽ khung realtime,
+  // tự chụp khi khung đứng yên.
+  // ---------------------------------------------------------------------------
+  var LIVE_SIZE = 320;        // cạnh dài khung hình dùng để nhận diện
+  var STABLE_MS = 1200;       // giữ yên bao lâu thì tự chụp
+  var live = { stream: null, worker: null, busy: false, target: null, disp: null, miss: 0,
+               stableSince: 0, raf: 0, small: null, scale: 1, lastKick: 0, capturing: false };
+
+  function makeWorker() {
+    // Worker dùng chung mã lõi: bản đóng gói 1 file có <script id="scanner-core-src">,
+    // bản chạy bằng server thì nạp js/scanner-core.js.
+    var el = document.getElementById('scanner-core-src');
+    var code = (el ? el.textContent : 'importScripts(' + JSON.stringify(new URL('js/scanner-core.js', location.href).href) + ');') +
+      '\nonmessage = function (e) { var m = e.data;' +
+      ' var d = DocScanner.detectDocument({ data: new Uint8ClampedArray(m.buf), width: m.w, height: m.h }, { procSize: m.w > m.h ? m.w : m.h, refineSize: 1, live: true });' +
+      ' postMessage(d); };';
+    try { return new Worker(URL.createObjectURL(new Blob([code], { type: 'text/javascript' }))); } catch (e) { return null; }
+  }
+
+  function startLive() {
+    $('pickMsg').hidden = true;
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) return liveError('Trình duyệt không hỗ trợ camera trực tiếp.');
+    show('stepLive');
+    $('liveHint').textContent = 'Đang mở camera…';
+    navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: 'environment' }, width: { ideal: 1920 }, height: { ideal: 1080 } }, audio: false })
+      .then(function (stream) {
+        if (!$('stepLive').classList.contains('active')) { stream.getTracks().forEach(function (t) { t.stop(); }); return; }
+        live.stream = stream;
+        var v = $('liveVideo');
+        v.srcObject = stream;
+        v.play().catch(function () {});
+        if (!live.worker) {
+          live.worker = makeWorker();
+          if (live.worker) {
+            live.worker.onmessage = function (e) { onLiveResult(e.data); };
+            live.worker.onerror = function () { live.worker = null; live.busy = false; };
+          }
+        }
+        live.target = live.disp = null; live.miss = 0; live.stableSince = 0; live.busy = false; live.capturing = false;
+        live.raf = requestAnimationFrame(liveTick);
+      })
+      .catch(function (err) {
+        show('stepPick');
+        liveError('Không mở được camera (' + (err && err.name || 'lỗi') + '). Trang cần chạy qua HTTPS và được cấp quyền camera; hoặc dùng nút "Chụp ảnh".');
+      });
+  }
+
+  function liveError(msg) { $('pickMsg').textContent = msg; $('pickMsg').hidden = false; }
+
+  function stopLive() {
+    if (live.raf) cancelAnimationFrame(live.raf);
+    live.raf = 0;
+    if (live.stream) { live.stream.getTracks().forEach(function (t) { t.stop(); }); live.stream = null; }
+    var v = $('liveVideo');
+    if (v) v.srcObject = null;
+  }
+
+  function liveTick(now) {
+    live.raf = requestAnimationFrame(liveTick);
+    var v = $('liveVideo');
+    if (v.readyState >= 2 && v.videoWidth && !live.busy && now - live.lastKick > 60) kickDetection(v, now);
+    drawLiveOverlay(now);
+  }
+
+  function kickDetection(v, now) {
+    var s = Math.min(1, LIVE_SIZE / Math.max(v.videoWidth, v.videoHeight));
+    var w = Math.round(v.videoWidth * s), h = Math.round(v.videoHeight * s);
+    if (!live.small) live.small = document.createElement('canvas');
+    var c = live.small;
+    if (c.width !== w || c.height !== h) { c.width = w; c.height = h; }
+    var ctx = c.getContext('2d', { willReadFrequently: true });
+    ctx.drawImage(v, 0, 0, w, h);
+    var id = ctx.getImageData(0, 0, w, h);
+    live.scale = s; live.busy = true; live.lastKick = now;
+    if (live.worker) {
+      live.worker.postMessage({ buf: id.data.buffer, w: w, h: h }, [id.data.buffer]);
+    } else {
+      // dự phòng khi không tạo được Worker: chạy trên luồng chính
+      setTimeout(function () {
+        onLiveResult(DocScanner.detectDocument({ data: id.data, width: w, height: h }, { procSize: Math.max(w, h), refineSize: 1, live: true }));
+      }, 0);
+    }
+  }
+
+  function onLiveResult(det) {
+    live.busy = false;
+    if (!live.stream) return;
+    var now = performance.now();
+    if (det.found) {
+      var pts = det.corners.map(function (p) { return { x: p.x / live.scale, y: p.y / live.scale }; });
+      var v = $('liveVideo'), diag = Math.hypot(v.videoWidth, v.videoHeight);
+      var moved = live.target ? Math.max.apply(null, pts.map(function (p, i) { return Math.hypot(p.x - live.target[i].x, p.y - live.target[i].y); })) / diag : 1;
+      if (moved > 0.02 || !live.stableSince) live.stableSince = now;
+      live.target = pts; live.miss = 0;
+      if (!live.disp) live.disp = pts.map(function (p) { return { x: p.x, y: p.y }; });
+      if ($('chkAuto').checked && now - live.stableSince > STABLE_MS && !live.capturing) capture();
+    } else if (++live.miss >= 3) {
+      live.target = null; live.stableSince = 0;
+    }
+  }
+
+  function drawLiveOverlay(now) {
+    var wrap = $('liveWrap'), cv = $('liveOverlay'), v = $('liveVideo');
+    var dpr = window.devicePixelRatio || 1, W = wrap.clientWidth, H = wrap.clientHeight;
+    if (cv.width !== Math.round(W * dpr) || cv.height !== Math.round(H * dpr)) { cv.width = Math.round(W * dpr); cv.height = Math.round(H * dpr); }
+    var ctx = cv.getContext('2d');
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, W, H);
+    var hint = $('liveHint');
+    if (!v.videoWidth) return;
+    if (!live.target) { live.disp = null; hint.textContent = 'Đưa tờ giấy vào khung hình'; return; }
+    // làm mượt: khung hiển thị trượt dần về vị trí mới nhất
+    live.disp = live.disp.map(function (p, i) { var t = live.target[i]; return { x: p.x + (t.x - p.x) * 0.35, y: p.y + (t.y - p.y) * 0.35 }; });
+    var s = Math.min(W / v.videoWidth, H / v.videoHeight), ox = (W - v.videoWidth * s) / 2, oy = (H - v.videoHeight * s) / 2;
+    var pts = live.disp.map(function (p) { return { x: ox + p.x * s, y: oy + p.y * s }; });
+    var held = live.stableSince ? Math.min(1, (now - live.stableSince) / STABLE_MS) : 0;
+    ctx.beginPath();
+    pts.forEach(function (p, k) { k ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y); });
+    ctx.closePath();
+    ctx.fillStyle = 'rgba(45,212,191,' + (0.12 + 0.18 * held) + ')';
+    ctx.fill();
+    ctx.lineWidth = 3; ctx.strokeStyle = held >= 1 ? '#22c55e' : '#2dd4bf'; ctx.stroke();
+    pts.forEach(function (p) { ctx.beginPath(); ctx.arc(p.x, p.y, 6, 0, Math.PI * 2); ctx.fillStyle = '#fff'; ctx.fill(); });
+    hint.textContent = $('chkAuto').checked
+      ? (held < 0.15 ? 'Giữ yên máy…' : 'Giữ yên… ' + Math.round(held * 100) + '%')
+      : 'Đã thấy tờ giấy — bấm Chụp';
+  }
+
+  function capture() {
+    var v = $('liveVideo');
+    if (!v.videoWidth || live.capturing) return;
+    live.capturing = true;
+    $('liveHint').textContent = 'Đang xử lý…';
+    var vw = v.videoWidth, vh = v.videoHeight, liveCorners = live.target;
+    var s = setSource(v, vw, vh);
+    stopLive();
+    var fallback = liveCorners ? liveCorners.map(function (p) { return { x: p.x * s, y: p.y * s }; }) : null;
+    show('stepCrop');
+    setTimeout(function () { runDetection(fallback); }, 0);
   }
 
   // ---------------------------------------------------------------------------
@@ -331,6 +483,14 @@
       var files = [];
       Array.prototype.forEach.call(e.clipboardData.items || [], function (it) { if (it.kind === 'file') files.push(it.getAsFile()); });
       handleFiles(files);
+    });
+
+    if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) $('btnLive').hidden = false;
+    $('btnLive').onclick = startLive;
+    $('btnLiveCancel').onclick = function () { show(state.pages.length ? 'stepPages' : 'stepPick'); };
+    $('btnShutter').onclick = capture;
+    document.addEventListener('visibilitychange', function () {
+      if (document.hidden && live.stream) show('stepPick');
     });
 
     initCropEvents();

@@ -122,6 +122,21 @@
     return out;
   }
 
+  /** Lọc min (co – erosion) = -max(-x). */
+  function minFilter(src, w, h, r) {
+    var neg = new Float32Array(src.length), i;
+    for (i = 0; i < src.length; i++) neg[i] = -src[i];
+    var m = maxFilter(neg, w, h, r);
+    for (i = 0; i < m.length; i++) m[i] = -m[i];
+    return m;
+  }
+
+  /**
+   * Phép đóng (closing) trên ảnh xám: max rồi min. Xoá các nét tối mảnh hơn ~2r
+   * (chữ, đường kẻ bảng, dấu mộc) nhưng giữ nguyên các vùng lớn như tờ giấy và vị trí mép của nó.
+   */
+  function grayClosing(g, w, h, r) { return minFilter(maxFilter(g, w, h, r), w, h, r); }
+
   function percentile(arr, p) {
     // histogram-based percentile for values in [0, maxV]
     var maxV = 0, i, n = arr.length;
@@ -476,6 +491,9 @@
     if (borderSide(A, B, ctx.w, ctx.h)) return { s: borderPaperSupport(ctx, A, B, q), border: true };
     var s = sideSupport(ctx.grad, ctx.w, ctx.h, A, B, ctx.thr, band, stepLen);
     s *= 1 - 0.7 * ruledFraction(ctx.gray, ctx.w, ctx.h, A, B); // đường kẻ bảng ≠ mép giấy
+    // ảnh đã xoá chữ: mép giấy mờ vẫn rõ, đường kẻ/chữ đã biến mất
+    // (hệ số 0.9: khi hoà, ưu tiên cạnh khớp biên ảnh gốc vì chính xác hơn ảnh đã làm mờ)
+    if (ctx.gradC) s = Math.max(s, 0.9 * sideSupport(ctx.gradC, ctx.w, ctx.h, A, B, ctx.thrC, band, stepLen));
     return { s: s, border: false };
   }
 
@@ -690,8 +708,17 @@
     var hi = Math.max(40, percentile(grad.mag, 0.9)), lo = hi * 0.4;
     var supportThr = Math.max(25, percentile(grad.mag, 0.75) * 0.8);
 
+    // Nhánh "xoá chữ": closing → làm mượt → gradient. Biên còn lại chủ yếu là mép giấy.
+    var closeR = Math.max(2, Math.round(Math.max(w, h) / 100));
+    var closedRaw = grayClosing(rawGray, w, h, closeR);
+    var grayC = gaussianBlur(closedRaw, w, h, 2);
+    var gradC = sobel(grayC, w, h);
+    var hiC = Math.max(16, percentile(gradC.mag, 0.92)), loC = hiC * 0.4;
+    var thrC = Math.max(12, hiC * 0.45);
+
     var candidates = [];
-    var sctx = { grad: grad, gray: rawGray, rgba: small.data, w: w, h: h, thr: supportThr, paperRef: percentile(rawGray, 0.92) };
+    var sctx = { grad: grad, gray: rawGray, rgba: small.data, w: w, h: h, thr: supportThr, paperRef: percentile(rawGray, 0.92),
+                 gradC: gradC, thrC: thrC };
     function addFromComp(c, tag) {
       var hull = convexHull(c.points);
       if (hull.length < 4) return;
@@ -732,6 +759,25 @@
       candidates.push({ quad: r.quad, tag: 'hough', fit: 1 });
     });
 
+    // (d) cùng các bước trên ảnh đã xoá chữ: ngưỡng Otsu (giấy sáng hơn nền) …
+    var tC = otsu(grayC), binC = new Uint8Array(w * h);
+    for (var iC = 0; iC < w * h; iC++) binC[iC] = grayC[iC] > tC ? 1 : 0;
+    components(binC, w, h, 1, minArea).forEach(function (c) { addFromComp(c, 'clean-bright'); });
+    // … và Canny + vùng kín + Hough
+    [[1, 1], [0.6, 1]].forEach(function (cfg, ci) {
+      var edgesC = canny(gradC, w, h, loC * cfg[0], hiC * cfg[0]);
+      var dilC = dilateBinary(edgesC, w, h, cfg[1]);
+      components(dilC, w, h, 0, minArea).forEach(function (c) {
+        if (!c.touches && c.area > minArea * 0.5) addFromComp(c, 'clean-region');
+      });
+      components(dilC, w, h, 1, minArea).forEach(function (c) { addFromComp(c, 'clean-edges'); });
+      if (ci === 0) {
+        houghQuads(houghLines(edgesC, w, h), sctx, 24).forEach(function (r) {
+          candidates.push({ quad: r.quad, tag: 'clean-hough', fit: 1 });
+        });
+      }
+    });
+
     var best = null;
     // Tứ giác toàn khung hình: đúng khi tờ giấy phủ kín ảnh (chụp cận)
     candidates.push({ quad: defaultCorners(w, h, 0), tag: 'frame', fit: 1 });
@@ -746,7 +792,7 @@
       });
     });
 
-    if (opts.debug) opts.debug.candidates = candidates, opts.debug.scoreQuad = function (q) { return scoreQuad(q, sctx); }, opts.debug.sc = sc;
+    if (opts.debug) opts.debug.candidates = candidates, opts.debug.scoreQuad = function (q) { return scoreQuad(q, sctx); }, opts.debug.sc = sc, opts.debug.grayC = grayC, opts.debug.gradC = gradC, opts.debug.w = w, opts.debug.h = h, opts.debug.thrC = thrC;
     // cả 4 cạnh trùng khung hình = không thấy mép giấy nào → dùng cả ảnh, báo chưa chắc chắn
     if (best && best.borderSides === 4) best = null;
     var found = !!best && best.minSupport >= 0.35 && best.score >= 0.4;
@@ -774,6 +820,12 @@
       var mxo = img.width * 0.1, myo = img.height * 0.1;
       corners = corners.map(function (p) { return { x: clamp(p.x, -mxo, img.width - 1 + mxo), y: clamp(p.y, -myo, img.height - 1 + myo) }; });
     } else {
+      // Không thấy mép giấy rõ (giấy trắng trên nền trắng, thiếu sáng…): ước lượng theo nội dung in
+      var cq = opts.live ? null : contentQuad(candidates, sctx, rawGray, closedRaw);
+      if (cq) {
+        corners = cq.map(function (p) { return { x: clamp(p.x / sc, 0, img.width - 1), y: clamp(p.y / sc, 0, img.height - 1) }; });
+        return { corners: corners, found: false, confidence: best ? Math.round(best.score * 100) / 100 : 0, method: 'content' };
+      }
       corners = defaultCorners(img.width, img.height, 0);
     }
     return {
@@ -782,6 +834,56 @@
       confidence: best ? Math.round(best.score * 100) / 100 : 0,
       method: found ? best.method : 'fallback'
     };
+  }
+
+  /**
+   * Khung trang ước lượng từ NỘI DUNG khi mép giấy không thấy được:
+   *  1. lấy tứ giác "cấu trúc" rõ nhất (thường là khung bảng / khối kẻ) để biết phối cảnh;
+   *  2. dàn phẳng mọi điểm mực (tối hơn nền giấy cục bộ) theo phối cảnh đó;
+   *  3. lấy khung bao nội dung (bỏ 1.5% điểm ngoại lai) + lề nhỏ, rồi chiếu ngược về ảnh.
+   */
+  function contentQuad(candidates, ctx, rawGray, closedRaw) {
+    var w = ctx.w, h = ctx.h, best = null, i, k;
+    candidates.forEach(function (c) {
+      var q = c.quad;
+      if (!isConvexQuad(q) || minInteriorAngleCos(q) > 0.6) return;
+      var frac = polygonArea(q) / (w * h);
+      if (frac < 0.1) return;
+      var sum = 0, mn = 1;
+      for (k = 0; k < 4; k++) {
+        if (borderSide(q[k], q[(k + 1) % 4], w, h)) return;
+        var sp = sideSupport(ctx.grad, w, h, q[k], q[(k + 1) % 4], ctx.thr, 2);
+        sum += sp; if (sp < mn) mn = sp;
+      }
+      if (mn < 0.6) return;
+      var sc = (sum / 4) * Math.sqrt(frac);
+      if (!best || sc > best.sc) best = { q: q, sc: sc };
+    });
+    var ref = best ? best.q : defaultCorners(w, h, 0);
+    var unit = [{ x: 0, y: 0 }, { x: 1, y: 0 }, { x: 1, y: 1 }, { x: 0, y: 1 }];
+    var H;
+    try { H = getPerspectiveTransform(ref, unit); } catch (e) { return null; }
+    var us = [], vs = [];
+    for (var y = 1; y < h - 1; y++) for (var x = 1; x < w - 1; x++) {
+      i = y * w + x;
+      if (rawGray[i] > closedRaw[i] - 35) continue; // không phải mực
+      var d = H[6] * x + H[7] * y + H[8];
+      us.push((H[0] * x + H[1] * y + H[2]) / d); vs.push((H[3] * x + H[4] * y + H[5]) / d);
+    }
+    if (us.length < w * h * 0.005) return null;
+    function pct(a, p) { var s = a.slice().sort(function (m, n) { return m - n; }); return s[Math.min(s.length - 1, Math.floor(p * s.length))]; }
+    var u0 = pct(us, 0.015), u1 = pct(us, 0.985), v0 = pct(vs, 0.015), v1 = pct(vs, 0.985);
+    var mu = (u1 - u0) * 0.02, mv = (v1 - v0) * 0.015;
+    var box = [{ x: u0 - mu, y: v0 - mv }, { x: u1 + mu, y: v0 - mv }, { x: u1 + mu, y: v1 + mv }, { x: u0 - mu, y: v1 + mv }];
+    var Hi;
+    try { Hi = getPerspectiveTransform(unit, ref); } catch (e) { return null; }
+    var out = box.map(function (p) {
+      var dd = Hi[6] * p.x + Hi[7] * p.y + Hi[8];
+      return { x: (Hi[0] * p.x + Hi[1] * p.y + Hi[2]) / dd, y: (Hi[3] * p.x + Hi[4] * p.y + Hi[5]) / dd };
+    });
+    var frac2 = polygonArea(out) / (w * h);
+    if (!isConvexQuad(out) || frac2 < 0.15 || frac2 > 1.3) return null;
+    return orderCorners(out);
   }
 
   function defaultCorners(w, h, margin) {
