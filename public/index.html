@@ -5,6 +5,15 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <title>Máy quét tài liệu</title>
   <meta name="description" content="Quét tài liệu từ ảnh chụp: tự nhận diện tờ giấy, nắn phẳng và làm trắng như máy scan.">
+  <link rel="manifest" href="manifest.webmanifest">
+  <meta name="theme-color" content="#0f766e">
+  <!-- iPhone: "Thêm vào Màn hình chính" → mở toàn màn hình như app -->
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="Quét giấy">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <link rel="apple-touch-icon" href="icons/icon-180.png">
+  <link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png">
   <link rel="stylesheet" href="css/app.css">
 </head>
 <body>
@@ -84,6 +93,7 @@
         <button class="btn" id="btnRecrop">‹ Chỉnh góc</button>
         <button class="btn" id="btnRotL" title="Xoay trái">⟲</button>
         <button class="btn" id="btnRotR" title="Xoay phải">⟳</button>
+        <button class="btn" id="btnShareImg">Chia sẻ / Lưu</button>
         <button class="btn" id="btnJpg">Tải JPG</button>
         <button class="btn" id="btnPng">Tải PNG</button>
         <button class="btn primary" id="btnAdd">+ Thêm vào tài liệu</button>
@@ -96,8 +106,10 @@
       <div id="pageList" class="pages"></div>
       <div class="toolbar">
         <button class="btn" id="btnMore">+ Quét thêm trang</button>
-        <button class="btn primary" id="btnPdf">Xuất PDF</button>
+        <button class="btn" id="btnPdf">Tải PDF</button>
+        <button class="btn primary" id="btnSharePdf">Chia sẻ PDF (Zalo, OneDrive…)</button>
       </div>
+      <p id="shareMsg" class="hint" hidden></p>
     </section>
   </main>
 

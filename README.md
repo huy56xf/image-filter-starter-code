@@ -8,6 +8,22 @@ Toàn bộ thuật toán viết bằng JavaScript thuần (không OpenCV), chạ
 
 Tìm hiểu chi tiết công nghệ: [docs/CONG-NGHE-SCAN.md](docs/CONG-NGHE-SCAN.md)
 
+## Cài lên iPhone (như một app)
+
+Ứng dụng là **PWA**: không cần App Store, cài trực tiếp từ Safari.
+
+1. Đăng web lên một địa chỉ HTTPS — đơn giản nhất là **GitHub Pages** (đã có sẵn
+   `.github/workflows/pages.yml`): vào *Settings → Pages → Source: GitHub Actions*, gộp code vào nhánh `main`;
+   link sẽ có dạng `https://<tài-khoản>.github.io/image-filter-starter-code/`.
+2. Trên iPhone mở link bằng **Safari** → nút **Chia sẻ** → **Thêm vào Màn hình chính**.
+3. Mở app từ icon "Quét giấy": chạy toàn màn hình, dùng được camera, **chạy cả khi không có mạng**
+   (mọi xử lý ảnh nằm trên máy, không gửi ảnh đi đâu).
+
+**Lưu / gửi file**: nút **Chia sẻ / Lưu** (ảnh) và **Chia sẻ PDF** mở bảng chia sẻ của iOS:
+- **Zalo** → chọn người/nhóm để gửi file;
+- **OneDrive** (cần cài app OneDrive) hoặc **Lưu vào Tệp → OneDrive**;
+- Mail, AirDrop, Google Drive…
+
 ## Chạy thử
 
 ```bash

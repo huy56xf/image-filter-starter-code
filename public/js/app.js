@@ -363,6 +363,11 @@
     var out = DocScanner.enhance(state.warped, state.mode);
     for (var r = 0; r < state.rotation; r++) out = DocScanner.rotate90(out, true);
     state.result = toCanvas(out);
+    // chuẩn bị sẵn file JPEG: trên iPhone, bảng chia sẻ phải mở NGAY trong lúc bấm nút
+    // (không được chờ xử lý bất đồng bộ), nên file phải có sẵn từ trước
+    state.resultBlob = null;
+    var target = state.result;
+    target.toBlob(function (b) { if (state.result === target) state.resultBlob = b; }, 'image/jpeg', 0.92);
   }
 
   function withBusy(fn) {
@@ -461,12 +466,52 @@
       list.appendChild(el);
     });
     $('btnPdf').disabled = state.pages.length === 0;
+    $('btnSharePdf').disabled = state.pages.length === 0;
+    preparePdf();
   }
 
-  function exportPdf() {
-    Promise.all(state.pages.map(function (p) {
+  function makePdf() {
+    return Promise.all(state.pages.map(function (p) {
       return p.blob.arrayBuffer().then(function (buf) { return { jpeg: new Uint8Array(buf), width: p.width, height: p.height }; });
-    })).then(function (pages) { download(buildPdf(pages), 'scan-' + stamp() + '.pdf'); });
+    })).then(buildPdf);
+  }
+
+  function exportPdf() { makePdf().then(function (pdf) { download(pdf, 'scan-' + stamp() + '.pdf'); }); }
+
+  /** Dựng sẵn PDF mỗi khi danh sách trang thay đổi (để nút Chia sẻ mở được ngay). */
+  function preparePdf() {
+    state.pdfBlob = null;
+    if (!state.pages.length) return;
+    var stampAt = state.pages.slice();
+    makePdf().then(function (pdf) {
+      if (stampAt.length === state.pages.length && stampAt.every(function (p, i) { return p === state.pages[i]; })) state.pdfBlob = pdf;
+    });
+  }
+
+  // ---------------------------------------------------------------------------
+  // Chia sẻ: mở bảng chia sẻ của hệ điều hành (iPhone/Android) → Zalo, OneDrive,
+  // Lưu vào Tệp, Mail… Không hỗ trợ thì tải file về.
+  // ---------------------------------------------------------------------------
+  function shareFile(blob, name, type, title) {
+    var msg = $('shareMsg');
+    if (!blob) { flash('Đang chuẩn bị file, bấm lại sau giây lát…'); return; }
+    var file;
+    try { file = new File([blob], name, { type: type }); } catch (e) { file = null; }
+    if (file && navigator.canShare && navigator.canShare({ files: [file] })) {
+      navigator.share({ files: [file], title: title }).catch(function (e) {
+        if (e && e.name === 'AbortError') return; // người dùng đóng bảng chia sẻ
+        download(blob, name);
+        flash('Không mở được bảng chia sẻ — đã tải file về máy.');
+      });
+    } else {
+      download(blob, name);
+      flash('Trình duyệt này không chia sẻ được file — đã tải file về. Trên iPhone hãy mở bằng Safari.');
+    }
+    function flash(t) {
+      if (!msg) { alert(t); return; }
+      msg.textContent = t; msg.hidden = false;
+      clearTimeout(flash.t); flash.t = setTimeout(function () { msg.hidden = true; }, 6000);
+    }
   }
 
   // ---------------------------------------------------------------------------
@@ -518,6 +563,15 @@
     $('btnPages').onclick = function () { show('stepPages'); };
     $('btnMore').onclick = function () { show('stepPick'); };
     $('btnPdf').onclick = exportPdf;
+    $('btnSharePdf').onclick = function () { shareFile(state.pdfBlob, 'scan-' + stamp() + '.pdf', 'application/pdf', 'Tài liệu scan'); };
+    $('btnShareImg').onclick = function () { shareFile(state.resultBlob, 'scan-' + stamp() + '.jpg', 'image/jpeg', 'Ảnh scan'); };
+
+    // Cài như app (PWA): đăng ký service worker để chạy offline.
+    // Bỏ qua trong bản xem thử 1 file (khung xem không hỗ trợ service worker).
+    if ('serviceWorker' in navigator && !document.getElementById('scanner-core-src') &&
+        (location.protocol === 'https:' || location.hostname === 'localhost')) {
+      navigator.serviceWorker.register('sw.js').catch(function () {});
+    }
 
     window.addEventListener('resize', function () {
       if ($('stepCrop').classList.contains('active')) layoutCrop();
