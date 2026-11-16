@@ -238,7 +238,28 @@
     ctx.drawImage(state.result, 0, 0, cv.width, cv.height);
   }
 
+  // Trong khung xem Artifact của claude.ai, tải file phải đi qua capability "downloads";
+  // chạy bình thường (server riêng) thì dùng link <a download>.
+  var downloadsApi = null;
+  function getDownloadsApi() {
+    if (!downloadsApi) {
+      downloadsApi = window.claude && window.claude.use
+        ? Promise.resolve(window.claude.use('downloads')).catch(function () { return null; })
+        : Promise.resolve(null);
+    }
+    return downloadsApi;
+  }
+
   function download(blob, name) {
+    getDownloadsApi().then(function (api) {
+      if (!api) return downloadViaLink(blob, name);
+      api.save({ filename: name, data: blob }).catch(function (e) {
+        if (e && e.code !== 'declined') console.warn('Không lưu được file:', e.code, e.message);
+      });
+    });
+  }
+
+  function downloadViaLink(blob, name) {
     var a = document.createElement('a');
     a.href = URL.createObjectURL(blob); a.download = name;
     document.body.appendChild(a); a.click(); a.remove();
