@@ -1,4 +1,6 @@
-# Máy quét tài liệu (Document Scanner) + Image Filter API
+# Máy quét tài liệu (Document Scanner)
+
+**Mở app:** https://huy56xf.github.io/image-filter-starter-code/
 
 Ứng dụng quét tài liệu kiểu **CamScanner**: chụp/chọn ảnh có tờ giấy → **tự nhận diện 4 góc** →
 **nắn phẳng phối cảnh** → **làm trắng nền, khử bóng** → tải về JPG/PNG hoặc gộp nhiều trang thành **PDF**.
@@ -12,12 +14,13 @@ Tìm hiểu chi tiết công nghệ: [docs/CONG-NGHE-SCAN.md](docs/CONG-NGHE-SCA
 
 Ứng dụng là **PWA**: không cần App Store, cài trực tiếp từ Safari.
 
-1. Đăng web lên một địa chỉ HTTPS — đơn giản nhất là **GitHub Pages** (đã có sẵn
-   `.github/workflows/pages.yml`): vào *Settings → Pages → Source: GitHub Actions*, gộp code vào nhánh `main`;
-   link sẽ có dạng `https://<tài-khoản>.github.io/image-filter-starter-code/`.
-2. Trên iPhone mở link bằng **Safari** → nút **Chia sẻ** → **Thêm vào Màn hình chính**.
+1. Trên iPhone mở **https://huy56xf.github.io/image-filter-starter-code/** bằng **Safari**.
+2. Bấm nút **Chia sẻ** (ô vuông có mũi tên) → **Thêm vào Màn hình chính** → **Thêm**.
 3. Mở app từ icon "Quét giấy": chạy toàn màn hình, dùng được camera, **chạy cả khi không có mạng**
    (mọi xử lý ảnh nằm trên máy, không gửi ảnh đi đâu).
+
+Web được đăng tự động lên GitHub Pages (nhánh `gh-pages`) mỗi khi thư mục `public/` trên `main` thay đổi
+(`.github/workflows/pages.yml`).
 
 **Lưu / gửi file**: nút **Chia sẻ / Lưu** (ảnh) và **Chia sẻ PDF** mở bảng chia sẻ của iOS:
 - **Zalo** → chọn người/nhóm để gửi file;
@@ -44,13 +47,12 @@ trên điện thoại cần HTTPS hoặc dùng nút "Chụp ảnh" — nút này
 3. **Quét** → chọn bộ lọc: *Màu nét*, *Xám*, *Đen trắng*, *Gốc*; xoay trái/phải.
 4. **Tải JPG/PNG** hoặc **Thêm vào tài liệu** → sắp xếp trang → **Xuất PDF**.
 
-## API
+## API (server chạy cục bộ, tuỳ chọn)
 
 | Phương thức | Đường dẫn | Mô tả |
 |---|---|---|
 | `GET` | `/scan?image_url=<URL>&mode=magic\|gray\|bw\|original` | Quét ảnh từ URL công khai |
 | `POST` | `/scan?mode=...` (body: ảnh, `Content-Type: image/*`) | Quét ảnh tải lên |
-| `GET` | `/filteredimage?image_url=<URL>` | API lọc ảnh cũ (resize 256px, xám) |
 
 ```bash
 curl --data-binary @photo.jpg -H "Content-Type: image/jpeg" \
@@ -73,16 +75,3 @@ src/
 test/scanner.test.js        kiểm thử bằng ảnh tổng hợp có phối cảnh, bóng đổ, nhiễu
 docs/CONG-NGHE-SCAN.md      giải thích công nghệ
 ```
-
-> Triển khai Elastic Beanstalk: script `npm run build` hiện chỉ đóng gói thư mục `www/`;
-> cần chép thêm thư mục `public/` vào gói để có giao diện và API `/scan`.
-
-## Image Filter API (dự án gốc)
-
-check screenshot of elastic beanstalk and eb init, eb create in file  Screenshot of elastic beanstalks.docx
-
-check elastic beanstalk api:
-http://image-filter-starter-code-dev422.us-east-1.elasticbeanstalk.com/filteredimage?image_url=https://media-cdn-v2.laodong.vn/Storage/NewsPortal/2020/6/30/816260/Cho-1.jpg
-
-local api:
-http://localhost:8082/filteredimage?image_url=https://media-cdn-v2.laodong.vn/Storage/NewsPortal/2020/6/30/816260/Cho-1.jpg
