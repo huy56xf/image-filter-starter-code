@@ -27,6 +27,11 @@ function makeScene(opts) {
       if (u > 20 && u < PW - 20 && v > 25 && v < PH - 40 && (v % 9) < 2.2 && ((u * 0.7 + Math.floor(v / 9) * 13) % 11) < 8) c = [35, 35, 40];
       if (u > 20 && u < 120 && v > 10 && v < 18) c = [30, 30, 30];      // tiêu đề
       if (u > 130 && u < 185 && v > 265 && v < 272) c = [190, 30, 30];   // chữ ký màu đỏ
+      if (opts.table && u > 15 && u < PW - 15 && v > 60 && v < 200) {     // bảng kẻ ô đậm
+        var gu = Math.min(Math.abs(u - 15), Math.abs(u - (PW - 15)), Math.abs(u - 60), Math.abs(u - 130));
+        var gv = Math.min(Math.abs(v - 60), Math.abs(v - 200), Math.abs(((v - 60) % 14) - 7) > 6.4 ? 0 : 9);
+        if (gu < 0.9 || gv < 0.9) c = [20, 20, 20];
+      }
     } else {
       var stripe = Math.floor((x + y * 0.15) / 18) % 2;
       c = stripe ? [92, 62, 38] : [110, 75, 45];
@@ -44,7 +49,39 @@ var cases = [
   { name: 'xoay ~30°', width: 1200, height: 900, shadow: 0.2, quad: [{ x: 520, y: 100 }, { x: 900, y: 320 }, { x: 640, y: 780 }, { x: 260, y: 560 }] }
 ];
 
+// Giấy tràn ra ngoài khung (mép trái + mép dưới) và có bảng kẻ đậm bên trong:
+// phải nhận cả trang (phần nhìn thấy), không được nhận nhầm khung bảng.
+function insideQuad(q, x, y) {
+  var sg = 0;
+  for (var i = 0; i < 4; i++) {
+    var a = q[i], b = q[(i + 1) % 4], c = (b.x - a.x) * (y - a.y) - (b.y - a.y) * (x - a.x);
+    if (c) { var t = c > 0 ? 1 : -1; if (sg && t !== sg) return false; sg = t; }
+  }
+  return true;
+}
+function iou(A, B, w, h) {
+  var I = 0, U = 0;
+  for (var y = 0; y < h; y += 3) for (var x = 0; x < w; x += 3) {
+    var a = insideQuad(A, x, y), b = insideQuad(B, x, y);
+    if (a && b) I++; if (a || b) U++;
+  }
+  return I / U;
+}
+var outCases = [
+  { name: 'tràn mép trái + dưới, có bảng', width: 900, height: 650, shadow: 0.3, table: true,
+    quad: [{ x: -40, y: 95 }, { x: 700, y: 40 }, { x: 800, y: 1000 }, { x: -60, y: 1060 }] },
+  { name: 'tràn mép dưới, có bảng', width: 1000, height: 750, shadow: 0.2, table: true,
+    quad: [{ x: 190, y: 50 }, { x: 800, y: 70 }, { x: 870, y: 1000 }, { x: 120, y: 980 }] }
+];
+
 var failed = 0;
+outCases.forEach(function (tc, k) {
+  var img = makeScene(Object.assign({ seed: k + 21 }, tc));
+  var det = DS.detectDocument(img), v = iou(det.corners, tc.quad, tc.width, tc.height);
+  if (v > 0.95) console.log('✓ ' + tc.name + ': IoU ' + v.toFixed(3) + ', phương pháp ' + det.method);
+  else { failed++; console.log('✗ ' + tc.name + ': IoU ' + v.toFixed(3) + ' (góc ' + JSON.stringify(det.corners.map(function (p) { return [Math.round(p.x), Math.round(p.y)]; })) + ')'); }
+});
+
 cases.forEach(function (tc, k) {
   try {
     var img = makeScene(Object.assign({ seed: k + 7 }, tc));

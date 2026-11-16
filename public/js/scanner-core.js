@@ -367,6 +367,118 @@
    * Độ bám biên của một cạnh: tỉ lệ điểm lấy mẫu trên cạnh mà ở gần đó (±band px
    * theo pháp tuyến) có gradient vuông góc với cạnh đủ mạnh.
    */
+  // Cạnh nằm trùng mép khung hình = tờ giấy tràn ra ngoài ảnh (xem borderPaperSupport).
+  function borderTol(w, h) { return Math.max(1.5, Math.max(w, h) * 0.004); }
+
+  /** Trả về đường biên ảnh (dạng điểm + hướng) nếu đoạn AB nằm trên mép ảnh, ngược lại null. */
+  function borderSide(A, B, w, h) {
+    var t = borderTol(w, h);
+    if (Math.abs(A.x) <= t && Math.abs(B.x) <= t) return { px: 0, py: 0, dx: 0, dy: 1 };
+    if (Math.abs(A.x - (w - 1)) <= t && Math.abs(B.x - (w - 1)) <= t) return { px: w - 1, py: 0, dx: 0, dy: 1 };
+    if (Math.abs(A.y) <= t && Math.abs(B.y) <= t) return { px: 0, py: 0, dx: 1, dy: 0 };
+    if (Math.abs(A.y - (h - 1)) <= t && Math.abs(B.y - (h - 1)) <= t) return { px: 0, py: h - 1, dx: 1, dy: 0 };
+    return null;
+  }
+
+  function borderLines(w, h) {
+    return [
+      { t: 0, rho: 0, c: 1, s: 0, border: true }, { t: 0, rho: w - 1, c: 1, s: 0, border: true },
+      { t: 90, rho: 0, c: 0, s: 1, border: true }, { t: 90, rho: h - 1, c: 0, s: 1, border: true }
+    ];
+  }
+
+  /**
+   * Mức độ (0..1) cạnh AB là một ĐƯỜNG KẺ trên giấy (vd. khung bảng) chứ không phải MÉP GIẤY.
+   * Lấy trung bình mặt cắt độ sáng vuông góc với cạnh dọc suốt chiều dài:
+   *   đường kẻ → sáng | tối | sáng, hai bên gần bằng nhau;
+   *   mép giấy → dạng bậc: một bên giấy, một bên nền.
+   * Trung bình hoá giúp bỏ qua chữ nằm sát hay nền có hoa văn.
+   */
+  function ruledFraction(gray, w, h, A, B) {
+    var dx = B.x - A.x, dy = B.y - A.y, len = Math.sqrt(dx * dx + dy * dy);
+    if (len < 8) return 0;
+    var nx = -dy / len, ny = dx / len, d = Math.max(6, Math.round(Math.max(w, h) / 70)), R = 2 * d;
+    var sum = new Float64Array(2 * R + 1), cnt = new Uint32Array(2 * R + 1), aSum = 0, bSum = 0, abN = 0;
+    function g(px, py, o) {
+      var x = Math.round(px + nx * o), y = Math.round(py + ny * o);
+      return x < 0 || y < 0 || x >= w || y >= h ? -1 : gray[y * w + x];
+    }
+    for (var k = 1; k < 48; k++) {
+      var t = k / 48, px = A.x + dx * t, py = A.y + dy * t, o;
+      // căn tâm theo điểm tối nhất trong ±3px (cạnh có thể hơi lệch góc so với nét kẻ)
+      var c0 = 0, cv = 256;
+      for (o = -3; o <= 3; o++) { var v0 = g(px, py, o); if (v0 >= 0 && v0 < cv) { cv = v0; c0 = o; } }
+      var am = -1, bm = -1;
+      for (o = -R; o <= R; o++) {
+        var v = g(px, py, o + c0);
+        if (v < 0) continue;
+        sum[o + R] += v; cnt[o + R]++;
+        // nền mỗi bên = điểm sáng nhất trong [d, 2d] → không bị chữ dày đặc kéo tối
+        if (o >= d && v > am) am = v;
+        if (o <= -d && v > bm) bm = v;
+      }
+      if (am >= 0 && bm >= 0) { aSum += am; bSum += bm; abN++; }
+    }
+    function P(o) { return cnt[o + R] ? sum[o + R] / cnt[o + R] : -1; }
+    if (!abN) return 0;
+    var a = aSum / abN, b = bSum / abN, c = 255, o2;
+    for (o2 = -1; o2 <= 1; o2++) if (P(o2) >= 0 && P(o2) < c) c = P(o2);
+    var ridge = Math.min(a, b) - c, step = Math.abs(a - b);
+    if (ridge < 12 || step > 0.15 * Math.max(a, b)) return 0;
+    return clamp((ridge - 1.5 * step) / 30, 0, 1);
+  }
+
+  /**
+   * Điểm cho cạnh nằm trên mép khung hình: tỉ lệ điểm ngay phía trong mép trông như
+   * giấy (sáng gần bằng giấy, ít màu). Giấy tràn ra ngoài ảnh → cao; nền rối, màu → thấp.
+   */
+  function borderPaperSupport(ctx, A, B, q) {
+    var w = ctx.w, h = ctx.h, d = ctx.rgba, cx = 0, cy = 0, i;
+    for (i = 0; i < 4; i++) { cx += q[i].x / 4; cy += q[i].y / 4; }
+    var dx = B.x - A.x, dy = B.y - A.y, len = Math.sqrt(dx * dx + dy * dy) || 1;
+    var nx = -dy / len, ny = dx / len, mx = (A.x + B.x) / 2, my = (A.y + B.y) / 2;
+    if ((cx - mx) * nx + (cy - my) * ny < 0) { nx = -nx; ny = -ny; } // hướng vào trong tứ giác
+    var off = Math.max(3, Math.round(Math.max(w, h) / 80)), win = Math.max(2, Math.round(Math.max(w, h) / 120)), n = 0, ok = 0;
+    for (var k = 1; k < 40; k++) {
+      var t = k / 40, x = Math.round(A.x + dx * t + nx * off), y = Math.round(A.y + dy * t + ny * off);
+      if (x < 0 || y < 0 || x >= w || y >= h) continue;
+      // ô nhỏ quanh điểm: đa số điểm là nền giấy (sáng, ít màu) thì coi là giấy;
+      // chữ/nét kẻ chỉ chiếm phần nhỏ, còn nền sọc/hoa văn thì không đạt
+      var good = 0, tot = 0;
+      for (var yy = Math.max(0, y - win); yy <= Math.min(h - 1, y + win); yy++) {
+        for (var xx = Math.max(0, x - win); xx <= Math.min(w - 1, x + win); xx++) {
+          var jj = (yy * w + xx) * 4, r = d[jj], g = d[jj + 1], b = d[jj + 2];
+          var L = 0.299 * r + 0.587 * g + 0.114 * b, sat = Math.max(r, g, b) - Math.min(r, g, b);
+          tot++;
+          if (L >= ctx.paperRef * 0.72 && sat < 45) good++;
+        }
+      }
+      n++;
+      if (good >= 0.6 * tot) ok++;
+    }
+    return n ? 0.6 * ok / n : 0;
+  }
+
+  /** Điểm của cạnh thứ k của tứ giác q (dùng chung cho chấm nhanh Hough và chấm đầy đủ). */
+  function sideScore(ctx, q, k, band, stepLen) {
+    var A = q[k], B = q[(k + 1) % 4];
+    // nhiều tứ giác Hough dùng chung một cạnh → nhớ kết quả (cạnh trên mép ảnh phụ thuộc
+    // hướng vào trong nên thêm tâm tứ giác vào khoá)
+    var key = Math.round(A.x * 2) + ',' + Math.round(A.y * 2) + ',' + Math.round(B.x * 2) + ',' + Math.round(B.y * 2) + ',' + band + ',' + (stepLen || 0);
+    if (borderSide(A, B, ctx.w, ctx.h)) key += ',' + Math.round((q[0].x + q[2].x) / 8) + ',' + Math.round((q[0].y + q[2].y) / 8);
+    if (!ctx.cache) ctx.cache = {};
+    var hit = ctx.cache[key];
+    if (hit) return hit;
+    return (ctx.cache[key] = sideScoreRaw(ctx, q, A, B, band, stepLen));
+  }
+
+  function sideScoreRaw(ctx, q, A, B, band, stepLen) {
+    if (borderSide(A, B, ctx.w, ctx.h)) return { s: borderPaperSupport(ctx, A, B, q), border: true };
+    var s = sideSupport(ctx.grad, ctx.w, ctx.h, A, B, ctx.thr, band, stepLen);
+    s *= 1 - 0.7 * ruledFraction(ctx.gray, ctx.w, ctx.h, A, B); // đường kẻ bảng ≠ mép giấy
+    return { s: s, border: false };
+  }
+
   function sideSupport(grad, w, h, A, B, thr, band, stepLen) {
     var dx = B.x - A.x, dy = B.y - A.y, len = Math.sqrt(dx * dx + dy * dy);
     if (len < 4) return 0;
@@ -436,7 +548,9 @@
   function angleDiff(a, b) { var d = Math.abs(a.t - b.t) % 180; return Math.min(d, 180 - d); }
 
   /** Ghép 2 cặp đường gần song song thành tứ giác, giữ lại các tứ giác điểm cao nhất. */
-  function houghQuads(lines, grad, w, h, thr, keep) {
+  function houghQuads(lines, ctx, keep) {
+    var grad = ctx.grad, w = ctx.w, h = ctx.h;
+    lines = lines.concat(borderLines(w, h));
     var pairs = [], i, j, minSep = Math.min(w, h) * 0.15, cx = w / 2, cy = h / 2;
     for (i = 0; i < lines.length; i++) for (j = i + 1; j < lines.length; j++) {
       if (angleDiff(lines[i], lines[j]) > 25) continue;
@@ -459,24 +573,34 @@
       if (!ok) continue;
       var q = orderCorners(pts);
       if (!isConvexQuad(q) || polygonArea(q) < w * h * 0.08 || minInteriorAngleCos(q) > 0.8) continue;
+      var nb = (A[0].border ? 1 : 0) + (A[1].border ? 1 : 0) + (B[0].border ? 1 : 0) + (B[1].border ? 1 : 0);
       var sup = 0, minS = 1;
-      for (k = 0; k < 4; k++) { var s = sideSupport(grad, w, h, q[k], q[(k + 1) % 4], thr, 1, 4); sup += s; if (s < minS) minS = s; }
+      for (k = 0; k < 4; k++) {
+        var s = sideScore(ctx, q, k, 1, 4).s;
+        sup += s; if (s < minS) minS = s;
+      }
       results.push({ quad: q, quick: (sup / 4) * 0.6 + minS * 0.4 + 0.2 * Math.sqrt(polygonArea(q) / (w * h)) });
     }
     results.sort(function (a, b) { return b.quick - a.quick; });
     return results.slice(0, keep);
   }
 
-  function scoreQuad(q, grad, w, h, thr) {
+  function scoreQuad(q, ctx) {
+    var w = ctx.w, h = ctx.h;
     if (!isConvexQuad(q)) return null;
     var area = polygonArea(q), frac = area / (w * h);
     if (frac < 0.08) return null;
     if (minInteriorAngleCos(q) > 0.8) return null; // góc < ~37° hoặc > ~143°
-    var sup = [], band = Math.max(2, Math.round(Math.max(w, h) / 160));
-    for (var i = 0; i < 4; i++) sup.push(sideSupport(grad, w, h, q[i], q[(i + 1) % 4], thr, band));
+    var sup = [], band = Math.max(2, Math.round(Math.max(w, h) / 160)), nBorder = 0;
+    for (var i = 0; i < 4; i++) {
+      var r = sideScore(ctx, q, i, band);
+      if (r.border) nBorder++;
+      sup.push(r.s);
+    }
     var minS = Math.min.apply(null, sup), mean = (sup[0] + sup[1] + sup[2] + sup[3]) / 4;
     var score = (0.6 * mean + 0.4 * minS) * (0.55 + 0.45 * Math.sqrt(Math.min(frac, 0.95)));
-    return { quad: q, score: score, support: sup, minSupport: minS, areaFrac: frac };
+    if (nBorder >= 3) score *= 0.9; // giấy phủ gần hết / kín khung hình
+    return { quad: q, score: score, support: sup, minSupport: minS, areaFrac: frac, borderSides: nBorder };
   }
 
   /**
@@ -488,6 +612,8 @@
     var lines = [], band = Math.max(3, Math.round(Math.max(w, h) / (maxShift ? 1 / maxShift : 100)));
     for (var s = 0; s < 4; s++) {
       var A = q[s], B = q[(s + 1) % 4], dx = B.x - A.x, dy = B.y - A.y, len = Math.sqrt(dx * dx + dy * dy);
+      var bl = borderSide(A, B, w, h);
+      if (bl) { lines.push(bl); continue; }
       var nx = -dy / len, ny = dx / len, steps = Math.round(len), pts = [], k, t, px, py, o, x, y, i;
       // Xác định "cực" của mép (nền→giấy sáng lên hay tối đi) ngay sát đường ban đầu,
       // để không bị hút sang mép của tiêu đề/khung bảng nằm gần mép giấy (cực ngược lại).
@@ -556,7 +682,8 @@
     var procSize = opts.procSize || 480;
     var ds = downscale(img, procSize), small = ds.image, sc = ds.scale;
     var w = small.width, h = small.height, minArea = w * h * 0.08;
-    var gray = gaussianBlur(toGray(small), w, h, 1.4);
+    var rawGray = toGray(small);
+    var gray = gaussianBlur(rawGray, w, h, 1.4);
     var grad = sobel(gray, w, h);
 
     // Ngưỡng gradient tự động theo phân vị
@@ -564,6 +691,7 @@
     var supportThr = Math.max(25, percentile(grad.mag, 0.75) * 0.8);
 
     var candidates = [];
+    var sctx = { grad: grad, gray: rawGray, rgba: small.data, w: w, h: h, thr: supportThr, paperRef: percentile(rawGray, 0.92) };
     function addFromComp(c, tag) {
       var hull = convexHull(c.points);
       if (hull.length < 4) return;
@@ -600,15 +728,17 @@
 
     // (c) Hough: 4 đường thẳng dài nhất tạo thành tứ giác – chịu được nền rối,
     //     mép giấy bị đứt đoạn hoặc một góc bị che.
-    houghQuads(houghLines(houghEdges, w, h), grad, w, h, supportThr, 12).forEach(function (r) {
+    houghQuads(houghLines(houghEdges, w, h), sctx, 24).forEach(function (r) {
       candidates.push({ quad: r.quad, tag: 'hough', fit: 1 });
     });
 
     var best = null;
+    // Tứ giác toàn khung hình: đúng khi tờ giấy phủ kín ảnh (chụp cận)
+    candidates.push({ quad: defaultCorners(w, h, 0), tag: 'frame', fit: 1 });
     candidates.forEach(function (c) {
       var refined = orderCorners(refineQuad(c.quad, grad, w, h, supportThr));
       [refined, c.quad].forEach(function (q) {
-        var s = scoreQuad(q, grad, w, h, supportThr);
+        var s = scoreQuad(q, sctx);
         if (!s) return;
         s.score *= 0.85 + 0.15 * Math.min(1, c.fit);
         s.method = c.tag;
@@ -616,7 +746,9 @@
       });
     });
 
-    if (opts.debug) opts.debug.candidates = candidates, opts.debug.scoreQuad = function (q) { return scoreQuad(q, grad, w, h, supportThr); }, opts.debug.sc = sc;
+    if (opts.debug) opts.debug.candidates = candidates, opts.debug.scoreQuad = function (q) { return scoreQuad(q, sctx); }, opts.debug.sc = sc;
+    // cả 4 cạnh trùng khung hình = không thấy mép giấy nào → dùng cả ảnh, báo chưa chắc chắn
+    if (best && best.borderSides === 4) best = null;
     var found = !!best && best.minSupport >= 0.35 && best.score >= 0.4;
     var corners;
     if (found) {
@@ -631,10 +763,18 @@
         corners = orderCorners(fq).map(function (p) { return { x: p.x / fs, y: p.y / fs }; });
       }
       // cho phép góc nằm hơi ngoài khung hình (tờ giấy bị cắt một góc)
+      // góc nằm sát mép khung hình (cạnh trùng mép ảnh) → gắn đúng vào mép
+      var snap = 2 / sc;
+      corners = corners.map(function (p) {
+        return {
+          x: Math.abs(p.x) < snap ? 0 : Math.abs(p.x - (img.width - 1)) < snap ? img.width - 1 : p.x,
+          y: Math.abs(p.y) < snap ? 0 : Math.abs(p.y - (img.height - 1)) < snap ? img.height - 1 : p.y
+        };
+      });
       var mxo = img.width * 0.1, myo = img.height * 0.1;
       corners = corners.map(function (p) { return { x: clamp(p.x, -mxo, img.width - 1 + mxo), y: clamp(p.y, -myo, img.height - 1 + myo) }; });
     } else {
-      corners = defaultCorners(img.width, img.height, 0.05);
+      corners = defaultCorners(img.width, img.height, 0);
     }
     return {
       corners: corners,

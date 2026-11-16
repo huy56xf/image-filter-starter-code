@@ -36,6 +36,12 @@ và cách ứng dụng trong repo này làm lại quy trình đó (`public/js/sc
 5. **Chấm điểm** từng tứ giác: tỉ lệ điểm trên mỗi cạnh có gradient *vuông góc với cạnh* đủ mạnh và
    *cùng dấu* (mép giấy luôn "sáng lên" hoặc "tối đi" nhất quán, còn dòng chữ thì đổi dấu liên tục),
    kết hợp với diện tích; loại tứ giác lõm, góc quá nhọn/tù, quá nhỏ.
+   - *Mép khung hình*: 4 mép ảnh cũng là "đường thẳng" ứng viên, nên tứ giác được phép có cạnh nằm
+     trên mép ảnh khi tờ giấy tràn ra ngoài khung (chụp cận). Cạnh như vậy chỉ được điểm khi dải ảnh
+     sát mép trông như giấy (đa số điểm sáng, ít màu).
+   - *Phân biệt đường kẻ với mép giấy*: khung bảng, ô kẻ có biên rất mạnh nhưng là **nét tối mảnh,
+     hai bên đều là giấy trắng**; mép giấy là **bậc chuyển** giấy → nền. Lấy mặt cắt độ sáng vuông góc
+     với cạnh (căn tâm từng mẫu, lấy nền sáng nhất mỗi bên để bỏ qua chữ) và giảm điểm các cạnh dạng "đường kẻ".
 6. **Tinh chỉnh dưới pixel**: ở độ phân giải ~1400px, gom các điểm biên dọc mỗi cạnh, khớp đường
    thẳng bằng bình phương tối thiểu (PCA) rồi lấy giao điểm 2 cạnh kề làm góc.
 
