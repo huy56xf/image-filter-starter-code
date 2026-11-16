@@ -1,0 +1,92 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Máy quét tài liệu</title>
+  <meta name="description" content="Quét tài liệu từ ảnh chụp: tự nhận diện tờ giấy, nắn phẳng và làm trắng như máy scan.">
+  <link rel="stylesheet" href="css/app.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path fill="currentColor" d="M4 4h6v2H6v4H4V4zm10 0h6v6h-2V6h-4V4zM4 14h2v4h4v2H4v-6zm14 0h2v6h-6v-2h4v-4zM8 11h8v2H8z"/></svg>
+      <span>Máy quét tài liệu</span>
+    </div>
+    <button id="btnPages" class="chip" hidden>Tài liệu: <b id="pageCount">0</b> trang</button>
+  </header>
+
+  <main>
+    <!-- Bước 1: chọn ảnh -->
+    <section id="stepPick" class="step active">
+      <div id="dropZone" class="drop">
+        <svg viewBox="0 0 24 24" width="56" height="56" aria-hidden="true"><path fill="currentColor" d="M9 3 7.2 5H4a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-3.2L15 3H9zm3 5a5 5 0 1 1 0 10 5 5 0 0 1 0-10zm0 2a3 3 0 1 0 0 6 3 3 0 0 0 0-6z"/></svg>
+        <h1>Chụp hoặc chọn ảnh tài liệu</h1>
+        <p>Ứng dụng tự tìm tờ giấy, nắn thẳng và làm trắng nền như bản scan. Ảnh được xử lý ngay trên máy của bạn, không tải lên đâu cả.</p>
+        <div class="row">
+          <label class="btn primary">
+            <input id="fileCamera" type="file" accept="image/*" capture="environment" hidden>
+            Chụp ảnh
+          </label>
+          <label class="btn">
+            <input id="fileInput" type="file" accept="image/*" multiple hidden>
+            Chọn từ thư viện
+          </label>
+        </div>
+        <p class="hint">Hoặc kéo-thả / dán (Ctrl+V) ảnh vào đây. Mẹo: đặt giấy trên nền tối, chụp đủ 4 góc.</p>
+      </div>
+    </section>
+
+    <!-- Bước 2: chỉnh góc -->
+    <section id="stepCrop" class="step">
+      <p id="detectInfo" class="info"></p>
+      <div id="cropWrap" class="stage">
+        <canvas id="cropCanvas"></canvas>
+        <canvas id="loupe" class="loupe" width="140" height="140" hidden></canvas>
+      </div>
+      <div class="toolbar">
+        <button class="btn" id="btnBack">Huỷ</button>
+        <button class="btn" id="btnAuto">Tự nhận diện</button>
+        <button class="btn" id="btnFull">Toàn ảnh</button>
+        <button class="btn primary" id="btnScan">Quét ›</button>
+      </div>
+    </section>
+
+    <!-- Bước 3: kết quả -->
+    <section id="stepResult" class="step">
+      <div class="filters" role="tablist">
+        <button data-mode="magic" class="filter active">Màu nét</button>
+        <button data-mode="gray" class="filter">Xám</button>
+        <button data-mode="bw" class="filter">Đen trắng</button>
+        <button data-mode="original" class="filter">Gốc</button>
+      </div>
+      <div class="stage result">
+        <canvas id="resultCanvas"></canvas>
+        <div id="busy" class="busy" hidden><div class="spinner"></div></div>
+      </div>
+      <div class="toolbar">
+        <button class="btn" id="btnRecrop">‹ Chỉnh góc</button>
+        <button class="btn" id="btnRotL" title="Xoay trái">⟲</button>
+        <button class="btn" id="btnRotR" title="Xoay phải">⟳</button>
+        <button class="btn" id="btnJpg">Tải JPG</button>
+        <button class="btn" id="btnPng">Tải PNG</button>
+        <button class="btn primary" id="btnAdd">+ Thêm vào tài liệu</button>
+      </div>
+    </section>
+
+    <!-- Danh sách trang -->
+    <section id="stepPages" class="step">
+      <h2>Tài liệu</h2>
+      <div id="pageList" class="pages"></div>
+      <div class="toolbar">
+        <button class="btn" id="btnMore">+ Quét thêm trang</button>
+        <button class="btn primary" id="btnPdf">Xuất PDF</button>
+      </div>
+    </section>
+  </main>
+
+  <script src="js/scanner-core.js"></script>
+  <script src="js/pdf.js"></script>
+  <script src="js/app.js"></script>
+</body>
+</html>
