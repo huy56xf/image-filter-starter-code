@@ -936,7 +936,7 @@
    * tiêu cự camera f rồi tính tỉ lệ. Trả về null nếu cấu hình suy biến (chụp thẳng,
    * hai cạnh song song) – khi đó dùng độ dài cạnh.
    */
-  function realAspectRatio(c, imgW, imgH) {
+  function realAspectRatio(c, imgW, imgH, opts) {
     if (!imgW || !imgH) return null;
     var u0 = imgW / 2, v0 = imgH / 2;
     var m1 = [c[0].x, c[0].y, 1], m2 = [c[1].x, c[1].y, 1], m3 = [c[3].x, c[3].y, 1], m4 = [c[2].x, c[2].y, 1];
@@ -952,11 +952,14 @@
       f2 = -((n2[0] * n3[0] - (n2[0] * n3[2] + n2[2] * n3[0]) * u0 + n2[2] * n3[2] * u0 * u0) +
              (n2[1] * n3[1] - (n2[1] * n3[2] + n2[2] * n3[1]) * v0 + n2[2] * n3[2] * v0 * v0)) / (n2[2] * n3[2]);
     }
-    // Tiêu cự hợp lý cho camera điện thoại: khoảng 0.5–5 lần cạnh dài của ảnh
-    var maxDim = Math.max(imgW, imgH);
-    if (f2 === null || !(f2 > 0)) return null;
-    var f = Math.sqrt(f2);
-    if (f < 0.5 * maxDim || f > 5 * maxDim) return null;
+    // Tiêu cự: dùng giá trị ước lượng nếu hợp lý cho camera điện thoại; nếu không ước lượng được
+    // (chụp nghiêng đối xứng → một cặp cạnh song song, tiêu cự không xác định) hoặc ra giá trị vô lý,
+    // dùng tiêu cự điển hình của camera điện thoại (24–26mm tương đương ≈ 0.75 × cạnh dài ảnh), hoặc tiêu cự thật đọc từ EXIF nếu có.
+    // Trước đây trường hợp này rơi về đo độ dài cạnh → chiều bị nghiêng co lại, trang A4 thành gần vuông.
+    var maxDim = Math.max(imgW, imgH), fPrior = (opts && opts.focal) || 0.75 * maxDim;
+    var f = f2 > 0 ? Math.sqrt(f2) : 0;
+    if (opts && opts.focal) f = opts.focal;                  // EXIF: tin cậy nhất
+    else if (!(f >= 0.55 * maxDim && f <= 1.8 * maxDim)) f = fPrior;
     function norm2(n) {
       var a = (n[0] - u0 * n[2]) / f, b = (n[1] - v0 * n[2]) / f;
       return a * a + b * b + n[2] * n[2];
@@ -965,25 +968,32 @@
     return isFinite(ar) && ar > 0.1 && ar < 10 ? ar : null;
   }
 
-  function outputSize(c, maxSide, imgW, imgH) {
+  function outputSize(c, maxSide, imgW, imgH, focal) {
     var wTop = dist(c[0], c[1]), wBot = dist(c[3], c[2]), hL = dist(c[0], c[3]), hR = dist(c[1], c[2]);
     var W = Math.max(wTop, wBot), H = Math.max(hL, hR);
-    var ar = realAspectRatio(c, imgW, imgH);
+    var ar = realAspectRatio(c, imgW, imgH, { focal: focal });
     if (ar) {
       // giữ nguyên độ phân giải theo chiều lớn hơn, chiều kia theo tỉ lệ thật
       if (W / H > ar) H = W / ar; else W = H * ar;
     }
-    var ratio = H / W, std = [Math.SQRT2, 11 / 8.5, 1 / Math.SQRT2, 8.5 / 11];
+    // Bắt dính về khổ chuẩn. Có EXIF thì tỉ lệ rất chính xác → dung sai A4 5%; không có thì 12%.
+    // Ưu tiên A4 (thông dụng ở VN); Letter chỉ khi khớp rất sát.
+    var ratio = H / W, a4 = focal ? 0.05 : 0.12, std = [
+      { r: Math.SQRT2, tol: a4 }, { r: 1 / Math.SQRT2, tol: a4 },
+      { r: 11 / 8.5, tol: 0.025 }, { r: 8.5 / 11, tol: 0.025 }
+    ], pick = null, bestE = Infinity;
     for (var i = 0; i < std.length; i++) {
-      if (Math.abs(ratio - std[i]) / std[i] < 0.06) { H = W * std[i]; break; }
+      var e = Math.abs(ratio - std[i].r) / std[i].r;
+      if (e < std[i].tol && e < bestE) { bestE = e; pick = std[i].r; }
     }
+    if (pick) { var sq = Math.sqrt(W * H); W = sq / Math.sqrt(pick); H = sq * Math.sqrt(pick); }
     var s = Math.min(1, (maxSide || 2480) / Math.max(W, H));
     return { width: Math.max(1, Math.round(W * s)), height: Math.max(1, Math.round(H * s)) };
   }
 
   function warpPerspective(img, corners, opts) {
     opts = opts || {};
-    var size = opts.width && opts.height ? { width: opts.width, height: opts.height } : outputSize(corners, opts.maxSide, img.width, img.height);
+    var size = opts.width && opts.height ? { width: opts.width, height: opts.height } : outputSize(corners, opts.maxSide, img.width, img.height, opts.focal);
     var W = size.width, Ht = size.height;
     // Cắt lẹm vào trong một chút (mặc định 0.6%) để loại viền nền/bóng sát mép giấy
     var inset = opts.inset === undefined ? 0.006 : opts.inset, ix = W * inset, iy = Ht * inset;
@@ -1039,14 +1049,16 @@
    * Chia ảnh cho nền này sẽ khử bóng đổ và làm giấy trắng đều.
    */
   function estimateBackground(img) {
-    var ds = downscale(img, 320), s = ds.image, sw = s.width, sh = s.height, n = sw * sh;
-    var r = Math.max(2, Math.round(Math.max(sw, sh) / 60));
+    var ds = downscale(img, 560), s = ds.image, sw = s.width, sh = s.height, n = sw * sh;
+    var r = Math.max(2, Math.round(Math.max(sw, sh) / 75));
     var res = [];
     for (var ch = 0; ch < 3; ch++) {
       var c = new Float32Array(n);
       for (var i = 0; i < n; i++) c[i] = s.data[i * 4 + ch];
-      var m = maxFilter(c, sw, sh, r);
-      m = boxBlur(m, sw, sh, r * 2);
+      // Phép ĐÓNG (max rồi min) thay vì chỉ max: xoá chữ nhưng giữ đúng vị trí mép bóng đổ.
+      // Chỉ lọc max thì vùng sáng loang vào trong bóng → để lại vệt xám dọc mép bóng.
+      var m = grayClosing(c, sw, sh, r);
+      m = boxBlur(m, sw, sh, Math.max(1, r >> 1));
       res.push(upsample(m, sw, sh, img.width, img.height));
     }
     return res;
@@ -1062,9 +1074,12 @@
   }
 
   /** Kéo giãn mức: điểm đen = phân vị thấp, điểm trắng = phân vị cao. */
-  function levels(img, blackP, whiteP, gamma) {
+  function levels(img, blackP, whiteP, gamma, whiteCap) {
     var n = img.width * img.height, g = toGray(img);
     var b = percentile(g, blackP), wv = percentile(g, whiteP);
+    // whiteCap: mọi điểm sáng hơn mức này thành trắng hẳn → xoá chữ mặt sau in thấu,
+    // vết bóng mờ còn sót (chữ in thật tối hơn nhiều nên không bị ảnh hưởng)
+    if (whiteCap && wv > whiteCap) wv = whiteCap;
     if (wv - b < 30) { b = Math.max(0, wv - 30); }
     var lut = new Uint8ClampedArray(256);
     for (var v = 0; v < 256; v++) lut[v] = 255 * Math.pow(clamp((v - b) / (wv - b), 0, 1), gamma);
@@ -1106,21 +1121,87 @@
   }
 
   /**
+   * Dọn mép bản scan: tô màu giấy cho các vùng KHÔNG PHẢI GIẤY (nền bàn, góc giấy bị gấp/thiếu,
+   * bóng đậm sát mép) nằm trong dải sát mép ảnh và NỐI LIỀN với mép ảnh.
+   * Chữ không chạm mép nên giữ nguyên. Kết quả: trang vuông vắn, không lẹm góc.
+   */
+  function cleanBorders(img, bandFrac) {
+    // Tìm vùng cần tô trên ảnh thu nhỏ (nhanh), rồi tô ở độ phân giải đầy đủ chỉ trong dải sát mép.
+    var W = img.width, H = img.height, D = img.data;
+    var ds = downscale(img, 1000), sm = ds.image, w = sm.width, h = sm.height, d = sm.data, n = w * h, i;
+    var g = toGray(sm), ref = percentile(g, 0.9);
+    var bf = bandFrac || 0.08, band = Math.max(4, Math.round(Math.min(w, h) * bf));
+    // màu giấy: trung bình các điểm sáng (nền giấy)
+    var pr = 0, pg = 0, pb = 0, pc = 0;
+    for (i = 0; i < n; i += 3) if (g[i] >= ref * 0.92) { pr += d[i * 4]; pg += d[i * 4 + 1]; pb += d[i * 4 + 2]; pc++; }
+    if (!pc) return img;
+    pr /= pc; pg /= pc; pb /= pc;
+    var psat = Math.max(pr, pg, pb) - Math.min(pr, pg, pb);
+    function notPaperRGB(r, gg, b, L) { return L < ref * 0.8 || Math.max(r, gg, b) - Math.min(r, gg, b) > psat + 45; }
+    function inBand(x, y) { return x < band || y < band || x >= w - band || y >= h - band; }
+    // Chỉ lan qua mảng "không phải giấy" DÀY (nền, góc gấp): co mặt nạ bán kính rr để loại nét chữ
+    // mảnh, nếu không vùng tô sẽ lan theo nét chữ sát mép và xoá mất chữ.
+    // Điểm tối hơn hẳn nền cục bộ (nét chữ, kể cả chữ nằm trong vùng bóng) không bao giờ bị tô.
+    var rr = Math.max(2, Math.round(Math.min(w, h) / 250));
+    // sát mép (1.5%) gần như không có chữ → ở đó tô cả dải tối mảnh (bóng mép giấy), không bảo vệ
+    var thin = Math.max(2, Math.round(Math.min(w, h) * 0.015));
+    function inThin(k) { var xx = k % w, yy = (k / w) | 0; return xx < thin || yy < thin || xx >= w - thin || yy >= h - thin; }
+    var localBg = grayClosing(g, w, h, rr * 2);
+    var np = new Float32Array(n);
+    for (i = 0; i < n; i++) {
+      np[i] = inThin(i) ? (g[i] < ref * 0.9 || notPaperRGB(d[i * 4], d[i * 4 + 1], d[i * 4 + 2], g[i]) ? 1 : 0)
+                        : (notPaperRGB(d[i * 4], d[i * 4 + 1], d[i * 4 + 2], g[i]) && localBg[i] - g[i] < 30 ? 1 : 0);
+    }
+    var thick = minFilter(np, w, h, rr);
+    var mark = new Float32Array(n), stack = new Int32Array(n), sp = 0, x, y, filled = 0;
+    function ok(k) { return thick[k] > 0 || (np[k] > 0 && inThin(k)); }
+    function seed(k) { if (!mark[k] && ok(k)) { mark[k] = 1; stack[sp++] = k; } }
+    for (x = 0; x < w; x++) { seed(x); seed((h - 1) * w + x); }
+    for (y = 0; y < h; y++) { seed(y * w); seed(y * w + w - 1); }
+    while (sp > 0) {
+      var k = stack[--sp]; x = k % w; y = (k / w) | 0; filled++;
+      if (x > 0 && inBand(x - 1, y)) seed(k - 1);
+      if (x < w - 1 && inBand(x + 1, y)) seed(k + 1);
+      if (y > 0 && inBand(x, y - 1)) seed(k - w);
+      if (y < h - 1 && inBand(x, y + 1)) seed(k + w);
+    }
+    if (!filled) return img;
+    var grown = maxFilter(mark, w, h, rr + 1); // nở lại phần đã co
+    // tô ở độ phân giải đầy đủ, chỉ trong dải sát mép
+    var out = createImage(W, H);
+    out.data.set(D);
+    var sx = w / W, sy = h / H, BW = Math.ceil((band + rr + 2) / sx), BH = Math.ceil((band + rr + 2) / sy);
+    for (var Y = 0; Y < H; Y++) {
+      var yS = Math.min(h - 1, (Y * sy) | 0), rowBand = Y < BH || Y >= H - BH;
+      for (var X = 0; X < W; X++) {
+        if (!rowBand && X >= BW && X < W - BW) { X = W - BW - 1; continue; }
+        var kS = yS * w + Math.min(w - 1, (X * sx) | 0);
+        if (!(grown[kS] > 0)) continue;
+        var j = (Y * W + X) * 4, r = D[j], gg = D[j + 1], b = D[j + 2], L = 0.299 * r + 0.587 * gg + 0.114 * b;
+        if (inThin(kS) ? !(L < ref * 0.9 || notPaperRGB(r, gg, b, L)) : (!notPaperRGB(r, gg, b, L) || localBg[kS] - L >= 30)) continue;
+        out.data[j] = pr; out.data[j + 1] = pg; out.data[j + 2] = pb;
+      }
+    }
+    return out;
+  }
+
+  /**
    * @param mode 'original' | 'magic' (màu, nền trắng) | 'gray' | 'bw' (đen trắng)
    */
   function enhance(img, mode) {
+    if (mode !== 'original') img = cleanBorders(img);
     switch (mode) {
       case 'original':
         return img;
       case 'gray': {
-        var n1 = levels(normalizeIllumination(img), 0.01, 0.6, 1.2);
+        var n1 = levels(normalizeIllumination(img), 0.01, 0.6, 1.2, 225);
         return grayImage(toGray(n1), n1.width, n1.height);
       }
       case 'bw':
         return binarize(normalizeIllumination(img));
       case 'magic':
       default:
-        return saturate(levels(normalizeIllumination(img), 0.005, 0.5, 1.35), 1.25);
+        return saturate(levels(normalizeIllumination(img), 0.005, 0.5, 1.35, 222), 1.25);
     }
   }
 
@@ -1138,11 +1219,167 @@
     return out;
   }
 
-  /** Quy trình đầy đủ: nhận diện → nắn → tăng cường. */
+  /**
+   * Đọc tiêu cự quy đổi 35mm (EXIF FocalLengthIn35mmFilm, hoặc FocalLength × hệ số nếu thiếu)
+   * từ dữ liệu JPEG, rồi đổi ra tiêu cự theo pixel cho ảnh rộng w × cao h.
+   * Trả về null nếu không có EXIF. (iPhone luôn ghi FocalLengthIn35mmFilm.)
+   */
+  function focalFromExif(buf, w, h) {
+    try {
+      var d = new DataView(buf.buffer || buf, buf.byteOffset || 0, buf.byteLength);
+      if (d.getUint16(0) !== 0xFFD8) return null;
+      var off = 2;
+      while (off + 4 < d.byteLength) {
+        var marker = d.getUint16(off), len = d.getUint16(off + 2);
+        if (marker === 0xFFE1 && d.getUint32(off + 4) === 0x45786966) { // "Exif"
+          var t = off + 10, le = d.getUint16(t) === 0x4949;
+          var u16 = function (o) { return d.getUint16(t + o, le); }, u32 = function (o) { return d.getUint32(t + o, le); };
+          var ifd = function (o, want) {
+            var n = u16(o), out = {};
+            for (var i = 0; i < n; i++) {
+              var e = o + 2 + i * 12, tag = u16(e);
+              if (want.indexOf(tag) >= 0) out[tag] = { type: u16(e + 2), val: e + 8 };
+            }
+            return out;
+          };
+          var ifd0 = ifd(u32(4), [0x8769]);
+          if (!ifd0[0x8769]) return null;
+          var ex = ifd(u32(ifd0[0x8769].val), [0xA405, 0x920A]);
+          var f35 = ex[0xA405] ? u16(ex[0xA405].val) : 0;
+          if (f35 > 0) return f35 / 43.27 * Math.sqrt(w * w + h * h); // 43.27mm = đường chéo khổ 35mm
+          return null;
+        }
+        if (marker === 0xFFDA || len < 2) break;
+        off += 2 + len;
+      }
+    } catch (e) { /* EXIF hỏng → bỏ qua */ }
+    return null;
+  }
+
+  /**
+   * Tự nhận hướng trang theo chữ in. Trả về số độ cần xoay THEO chiều kim đồng hồ (0/90/180/270)
+   * để chữ nằm ngang, đứng thẳng.
+   *  1. Mặt nạ mực (tối hơn nền cục bộ), bỏ các đường kẻ dài (khung bảng).
+   *  2. Hướng dòng chữ: dòng ngang → tổng mực theo HÀNG dao động mạnh (dòng/khoảng trống xen kẽ);
+   *     dòng đứng → dao động theo CỘT.
+   *  3. Phía "trên" của chữ: tiếng Việt (và chữ Latin) có nhiều dấu + nét đi lên hơn nét đi xuống,
+   *     nên trong mỗi dòng, phía nào ngoài thân chữ nhiều mực hơn là phía trên.
+   */
+  function detectOrientation(img) {
+    var ds = downscale(img, 1000), sm = ds.image, w = sm.width, h = sm.height, n = w * h, i, x, y;
+    var g = toGray(sm), r = Math.max(2, Math.round(Math.max(w, h) / 150));
+    var bg = grayClosing(g, w, h, r), ink = new Uint8Array(n), total = 0;
+    for (i = 0; i < n; i++) if (bg[i] - g[i] > 40) { ink[i] = 1; total++; }
+    if (total < n * 0.004) return 0; // gần như trắng trơn
+    // bỏ đường kẻ dài ngang/dọc
+    var runH = Math.round(w * 0.08), runV = Math.round(h * 0.08), keep = ink.slice(), a;
+    for (y = 0; y < h; y++) for (x = 0; x < w;) {
+      if (!ink[y * w + x]) { x++; continue; }
+      for (a = x; a < w && ink[y * w + a]; a++);
+      if (a - x > runH) for (var k = x; k < a; k++) keep[y * w + k] = 0;
+      x = a;
+    }
+    for (x = 0; x < w; x++) for (y = 0; y < h;) {
+      if (!ink[y * w + x]) { y++; continue; }
+      for (a = y; a < h && ink[a * w + x]; a++);
+      if (a - y > runV) for (var k2 = y; k2 < a; k2++) keep[k2 * w + x] = 0;
+      y = a;
+    }
+    // Gán nhãn thành phần liên thông (8 hướng) của mặt nạ mực
+    var lab = new Int32Array(n), stack = new Int32Array(n), comps = [], id = 0;
+    for (i = 0; i < n; i++) {
+      if (!keep[i] || lab[i]) continue;
+      id++;
+      var sp = 0, area = 0, sx = 0, sy = 0, x0 = w, x1 = 0, y0 = h, y1 = 0;
+      stack[sp++] = i; lab[i] = id;
+      while (sp > 0) {
+        var q = stack[--sp], qx = q % w, qy = (q / w) | 0;
+        area++; sx += qx; sy += qy;
+        if (qx < x0) x0 = qx; if (qx > x1) x1 = qx; if (qy < y0) y0 = qy; if (qy > y1) y1 = qy;
+        for (var dy = -1; dy <= 1; dy++) for (var dx = -1; dx <= 1; dx++) {
+          var nx = qx + dx, ny = qy + dy;
+          if (nx < 0 || ny < 0 || nx >= w || ny >= h) continue;
+          var nq = ny * w + nx;
+          if (keep[nq] && !lab[nq]) { lab[nq] = id; stack[sp++] = nq; }
+        }
+      }
+      comps[id] = { area: area, cx: sx / area, cy: sy / area, bw: x1 - x0 + 1, bh: y1 - y0 + 1 };
+    }
+    var areas = [];
+    for (i = 1; i <= id; i++) if (comps[i].area >= 6) areas.push(comps[i].area);
+    if (areas.length < 40) return 0;
+    areas.sort(function (m, k3) { return m - k3; });
+    var aMed = areas[areas.length >> 1];
+    var size = Math.sqrt(aMed) * 2.2; // ≈ cỡ một chữ cái
+    // Mỗi DẤU (mảnh nhỏ đứng riêng) bỏ phiếu: thân chữ gần nhất nằm ở hướng nào → "lên" là hướng ngược lại
+    var votes = [0, 0, 0, 0]; // lên = trên, phải, dưới, trái
+    var dirs = [[0, 1], [-1, 0], [0, -1], [1, 0]]; // hướng TÌM THÂN CHỮ: xuống, trái, lên, phải
+    for (i = 1; i <= id; i++) {
+      var c = comps[i];
+      if (c.area > aMed * 0.3 || c.area < 2 || c.bw > size || c.bh > size) continue;
+      var best = -1, bd = Infinity, second = Infinity;
+      for (var di = 0; di < 4; di++) {
+        for (var st = 1; st <= size; st++) {
+          var px = Math.round(c.cx + dirs[di][0] * st), py = Math.round(c.cy + dirs[di][1] * st);
+          if (px < 0 || py < 0 || px >= w || py >= h) break;
+          var L = lab[py * w + px];
+          if (L && L !== i && comps[L].area >= aMed * 0.5) {
+            if (st < bd) { second = bd; bd = st; best = di; } else if (st < second) second = st;
+            break;
+          }
+        }
+      }
+      if (best >= 0 && bd * 1.6 < second) votes[best]++;
+    }
+    // Hướng dòng (docstrum): chữ cái gần nhất của mỗi chữ cái nằm DỌC theo dòng.
+    var cell = Math.max(4, Math.round(size * 1.5)), gw = Math.ceil(w / cell), grid = {}, bigs = [];
+    for (i = 1; i <= id; i++) {
+      var cb = comps[i];
+      if (cb.area < aMed * 0.4 || cb.area > aMed * 6 || cb.bw > size * 3 || cb.bh > size * 3) continue;
+      bigs.push(cb);
+      var key = Math.floor(cb.cy / cell) * gw + Math.floor(cb.cx / cell);
+      (grid[key] = grid[key] || []).push(cb);
+    }
+    var hor = 0, ver = 0;
+    bigs.forEach(function (cb) {
+      var gx = Math.floor(cb.cx / cell), gy = Math.floor(cb.cy / cell), nb = null, nd = Infinity;
+      for (var yy = gy - 1; yy <= gy + 1; yy++) for (var xx = gx - 1; xx <= gx + 1; xx++) {
+        var arr = grid[yy * gw + xx];
+        if (!arr || xx < 0 || xx >= gw) continue;
+        for (var t = 0; t < arr.length; t++) {
+          var o2 = arr[t];
+          if (o2 === cb) continue;
+          var dd = (o2.cx - cb.cx) * (o2.cx - cb.cx) + (o2.cy - cb.cy) * (o2.cy - cb.cy);
+          if (dd < nd) { nd = dd; nb = o2; }
+        }
+      }
+      if (!nb) return;
+      if (Math.abs(nb.cx - cb.cx) > Math.abs(nb.cy - cb.cy)) hor++; else ver++;
+    });
+    var vertical = ver > hor;
+    // votes: 0 = dấu ở TRÊN thân chữ, 1 = ở PHẢI, 2 = ở DƯỚI, 3 = ở TRÁI.
+    // Chỉ xét 2 hướng vuông góc với dòng (dấu câu đứng cạnh chữ bị bỏ qua).
+    var a1 = vertical ? 3 : 0, a2 = vertical ? 1 : 2;   // dòng đứng: trái/phải; dòng ngang: trên/dưới
+    if (votes[a1] + votes[a2] < 12) return vertical ? 90 : 0;
+    if (!vertical) return votes[2] > votes[0] * 1.5 ? 180 : 0; // lộn ngược chỉ khi bằng chứng mạnh
+    // dấu ở TRÁI → phía "lên" của chữ là bên trái → xoay phải 90°; ở PHẢI → xoay trái (270°)
+    return votes[3] >= votes[1] ? 90 : 270;
+  }
+
+  function rotateBy(img, deg) {
+    deg = ((deg % 360) + 360) % 360;
+    if (deg === 90) return rotate90(img, true);
+    if (deg === 270) return rotate90(img, false);
+    if (deg === 180) return rotate90(rotate90(img, true), true);
+    return img;
+  }
+
+  /** Quy trình đầy đủ: nhận diện → nắn → tự xoay → tăng cường. */
   function scan(img, opts) {
     opts = opts || {};
     var det = opts.corners ? { corners: opts.corners, found: true, confidence: 1, method: 'manual' } : detectDocument(img);
-    var warped = warpPerspective(img, det.corners, { maxSide: opts.maxSide });
+    var warped = warpPerspective(img, det.corners, { maxSide: opts.maxSide, focal: opts.focal });
+    if (opts.autoRotate !== false) warped = rotateBy(warped, detectOrientation(warped));
     return { image: enhance(warped, opts.mode || 'magic'), detection: det };
   }
 
@@ -1151,10 +1388,13 @@
     defaultCorners: defaultCorners,
     orderCorners: orderCorners,
     getPerspectiveTransform: getPerspectiveTransform,
+    focalFromExif: focalFromExif,
     warpPerspective: warpPerspective,
     outputSize: outputSize,
     enhance: enhance,
     rotate90: rotate90,
+    rotateBy: rotateBy,
+    detectOrientation: detectOrientation,
     downscale: downscale,
     scan: scan
   };

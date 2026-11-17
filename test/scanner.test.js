@@ -119,5 +119,91 @@ if (d0.found) { failed++; console.log('✗ ảnh trống: báo nhầm có giấy
 var size = DS.outputSize([{ x: 0, y: 0 }, { x: 210, y: 0 }, { x: 210, y: 297 }, { x: 0, y: 297 }]);
 if (Math.abs(size.height / size.width - Math.SQRT2) > 0.01) { failed++; console.log('✗ tỉ lệ A4'); } else console.log('✓ tỉ lệ A4');
 
+// ---------------------------------------------------------------------------
+// Trang đã nắn phẳng (tổng hợp): dòng "chữ" có dấu phía trên (như tiếng Việt), vài dấu nặng phía dưới
+// ---------------------------------------------------------------------------
+function flatPage(W, H, opts) {
+  opts = opts || {};
+  var img = { data: new Uint8ClampedArray(W * H * 4).fill(255), width: W, height: H }, rand = rng(opts.seed || 3);
+  function put(x, y, v) { if (x >= 0 && y >= 0 && x < W && y < H) { var i = (y * W + x) * 4; img.data[i] = img.data[i + 1] = img.data[i + 2] = v; } }
+  function rect(x0, y0, w, h, v) { for (var y = y0; y < y0 + h; y++) for (var x = x0; x < x0 + w; x++) put(x, y, v); }
+  for (var y = 60; y < H - 80; y += 26) {
+    for (var x = 50; x < W - 60;) {
+      var wl = 3 + Math.floor(rand() * 4);                     // một "từ" gồm vài chữ cái
+      for (var c = 0; c < wl && x < W - 60; c++, x += 10) {
+        var tall = rand() < 0.3;
+        rect(x, y + (tall ? 0 : 4), 7, tall ? 14 : 10, 25);    // thân chữ
+        if (rand() < 0.45) rect(x + 2, y - 5, 3, 3, 25);        // dấu phía trên (sắc, huyền, mũ…)
+        else if (rand() < 0.08) rect(x + 2, y + 17, 3, 3, 25);  // dấu nặng phía dưới
+      }
+      x += 12;
+    }
+  }
+  return img;
+}
+function lum(img, x, y) { var i = (y * img.width + x) * 4; return 0.299 * img.data[i] + 0.587 * img.data[i + 1] + 0.114 * img.data[i + 2]; }
+function check(name, cond, detail) {
+  if (cond) console.log('✓ ' + name + (detail ? ': ' + detail : ''));
+  else { failed++; console.log('✗ ' + name + (detail ? ': ' + detail : '')); }
+}
+
+// Tự xoay: trang bị xoay 0/90/180/270 → phải trả về đúng góc xoay ngược lại
+(function () {
+  var page = flatPage(700, 990), res = [];
+  [0, 90, 180, 270].forEach(function (rot) {
+    var got = DS.detectOrientation(DS.rotateBy(page, rot));
+    res.push(rot + '°→' + got + '°' + (got === (360 - rot) % 360 ? '' : ' (sai)'));
+  });
+  check('tự nhận hướng trang (xoay ngang / lộn ngược)', res.join(' ').indexOf('sai') < 0, res.join(', '));
+})();
+
+// Bóng đổ sắc + bóng mép: sau "Màu nét" nền phải trắng đều, chữ còn nguyên
+(function () {
+  var W = 700, H = 990, page = flatPage(W, H, { seed: 9 }), sh = { data: new Uint8ClampedArray(page.data), width: W, height: H };
+  for (var y = 0; y < H; y++) for (var x = 0; x < W; x++) {
+    var f = 1;
+    if (x + 0.6 * y > 900) f *= 0.6;                       // bóng tay/điện thoại, mép sắc
+    if (x < 60) f *= 0.65 + 0.35 * x / 60;                  // bóng mép giấy
+    var i = (y * W + x) * 4;
+    sh.data[i] *= f; sh.data[i + 1] *= f * 0.97; sh.data[i + 2] *= f * 0.9;
+  }
+  var out = DS.enhance(sh, 'magic'), grayBg = 0, bgN = 0, txtKept = 0, txtN = 0;
+  for (y = 0; y < H; y += 2) for (x = 0; x < W; x += 2) {
+    var orig = lum(page, x, y), o = lum(out, x, y);
+    if (orig > 250) { bgN++; if (o < 235) grayBg++; } else { txtN++; if (o < 140) txtKept++; }
+  }
+  check('khử bóng đổ', grayBg / bgN < 0.01 && txtKept / txtN > 0.97,
+    'nền còn xám ' + (100 * grayBg / bgN).toFixed(2) + '%, chữ giữ ' + (100 * txtKept / txtN).toFixed(1) + '%');
+})();
+
+// Lẹm góc: mảng nền tối ở góc + chữ sát mép → góc thành trắng, chữ còn
+(function () {
+  var W = 700, H = 990, page = flatPage(W, H, { seed: 4 }), x, y;
+  for (y = 0; y < 70; y++) for (x = W - 70 + y; x < W; x++) { var i = (y * W + x) * 4; page.data[i] = 70; page.data[i + 1] = 60; page.data[i + 2] = 50; }
+  var out = DS.enhance(page, 'magic'), dark = 0, n = 0, kept = 0, tn = 0, ref = flatPage(W, H, { seed: 4 });
+  for (y = 0; y < 60; y++) for (x = W - 50; x < W; x++) { n++; if (lum(out, x, y) < 200) dark++; }
+  for (y = 70; y < H; y++) for (x = 0; x < W; x++) if (lum(ref, x, y) < 100) { tn++; if (lum(out, x, y) < 140) kept++; }
+  check('xoá lẹm góc', dark / n < 0.02 && kept / tn > 0.98, 'góc còn tối ' + (100 * dark / n).toFixed(1) + '%, chữ giữ ' + (100 * kept / tn).toFixed(1) + '%');
+})();
+
+// Tỉ lệ khổ giấy khi chụp nghiêng đối xứng (trước đây A4 bị co gần vuông)
+(function () {
+  function project(W, H, f, tiltDeg) { // camera lỗ kim nhìn tờ A4 nghiêng quanh trục ngang
+    var t = tiltDeg * Math.PI / 180, pw = 0.21, ph = 0.297, dist = 0.5, cx = W / 2, cy = H / 2;
+    return [[-pw / 2, -ph / 2], [pw / 2, -ph / 2], [pw / 2, ph / 2], [-pw / 2, ph / 2]].map(function (p) {
+      var Y = p[1] * Math.cos(t), Z = dist + p[1] * Math.sin(t);
+      return { x: cx + f * p[0] / Z, y: cy + f * Y / Z };
+    });
+  }
+  var res = [], bad = 0;
+  [[30, 0.75], [45, 0.75], [55, 0.7], [45, 0.85]].forEach(function (c) {
+    var q = project(1200, 1600, c[1] * 1600, c[0]), o = DS.outputSize(q, 2480, 1200, 1600);
+    var r = o.width / o.height, err = Math.abs(r - 1 / Math.SQRT2) / (1 / Math.SQRT2);
+    if (err > 0.03) bad++;
+    res.push('nghiêng ' + c[0] + '°: ' + r.toFixed(3));
+  });
+  check('tỉ lệ A4 khi chụp nghiêng', !bad, res.join(', ') + ' (A4 = 0.707)');
+})();
+
 if (failed) { console.log(failed + ' kiểm thử thất bại'); process.exit(1); }
 console.log('Tất cả kiểm thử đều đạt');

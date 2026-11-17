@@ -69,12 +69,21 @@
     state.srcCanvas = c;
     state.rotation = 0;
     state.warped = null;
+    state.focal = null;
     return s;
   }
 
+  /** Đọc phần đầu file JPEG (chứa EXIF) để lấy tiêu cự camera; lỗi thì bỏ qua. */
+  function readFocal(file) {
+    if (!/jpe?g/i.test(file.type) || !file.slice || !file.slice(0, 1).arrayBuffer) return Promise.resolve(null);
+    return file.slice(0, 256 * 1024).arrayBuffer().then(function (b) { return new Uint8Array(b); }).catch(function () { return null; });
+  }
+
   function openFile(file) {
-    loadBitmap(file).then(function (bmp) {
-      setSource(bmp, bmp.width, bmp.height);
+    Promise.all([loadBitmap(file), readFocal(file)]).then(function (r) {
+      var bmp = r[0], s = setSource(bmp, bmp.width, bmp.height);
+      var f = r[1] ? DocScanner.focalFromExif(r[1], bmp.width, bmp.height) : null;
+      state.focal = f ? f * s : null;
       runDetection();
       show('stepCrop');
     }).catch(function (e) { alert(e.message); });
@@ -357,8 +366,11 @@
     var corners = DocScanner.orderCorners(state.corners);
     var key = JSON.stringify(corners);
     if (!state.warped || state.warpedKey !== key) {
-      state.warped = DocScanner.warpPerspective(state.src, corners);
+      // focal: tiêu cự thật từ EXIF (nếu có) → tỉ lệ khổ giấy chính xác
+      state.warped = DocScanner.warpPerspective(state.src, corners, { focal: state.focal });
       state.warpedKey = key;
+      // tự xoay theo chữ (trang nằm ngang / lộn ngược); nút xoay tay chỉnh tiếp từ đây
+      state.rotation = DocScanner.detectOrientation(state.warped) / 90;
     }
     var out = DocScanner.enhance(state.warped, state.mode);
     for (var r = 0; r < state.rotation; r++) out = DocScanner.rotate90(out, true);
