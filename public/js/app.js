@@ -25,6 +25,7 @@
   // ---------------------------------------------------------------------------
   function show(step) {
     if (step !== 'stepLive') stopLive();
+    if ($('viewer')) $('viewer').hidden = true;
     ['stepPick', 'stepLive', 'stepCrop', 'stepResult', 'stepPages'].forEach(function (id) {
       $(id).classList.toggle('active', id === step);
     });
@@ -467,6 +468,7 @@
         '<span><button data-act="up" title="Lên">↑</button><button data-act="down" title="Xuống">↓</button>' +
         '<button data-act="del" title="Xoá">✕</button></span></div>';
       el.querySelector('img').src = p.url;
+      el.querySelector('img').addEventListener('click', function () { openViewer(i); });
       el.addEventListener('click', function (e) {
         var act = e.target.getAttribute('data-act');
         if (act === 'del') { URL.revokeObjectURL(p.url); state.pages.splice(i, 1); }
@@ -482,21 +484,58 @@
     preparePdf();
   }
 
+  /** File nhẹ: thu nhỏ trang còn ~1600px (≈190 dpi A4) và nén mạnh hơn → nhỏ hơn nhiều lần, chữ vẫn rõ. */
+  function lightJpeg(p) {
+    var s = Math.min(1, 1600 / Math.max(p.width, p.height)), w = Math.round(p.width * s), h = Math.round(p.height * s);
+    return loadBitmap(p.blob).then(function (bmp) {
+      var c = document.createElement('canvas');
+      c.width = w; c.height = h;
+      var ctx = c.getContext('2d');
+      ctx.imageSmoothingQuality = 'high';
+      ctx.drawImage(bmp, 0, 0, w, h);
+      return new Promise(function (res) { c.toBlob(res, 'image/jpeg', 0.6); });
+    }).then(function (b) { return b.arrayBuffer(); }).then(function (buf) { return { jpeg: new Uint8Array(buf), width: w, height: h }; });
+  }
+
   function makePdf() {
+    var light = $('chkLight').checked;
     return Promise.all(state.pages.map(function (p) {
+      if (light) return lightJpeg(p);
       return p.blob.arrayBuffer().then(function (buf) { return { jpeg: new Uint8Array(buf), width: p.width, height: p.height }; });
     })).then(buildPdf);
   }
+
+  function fmtSize(b) { return b > 1048576 ? (b / 1048576).toFixed(1).replace('.', ',') + ' MB' : Math.max(1, Math.round(b / 1024)) + ' KB'; }
+
+  // ---------------------------------------------------------------------------
+  // Xem lớn từng trang (vuốt trái/phải để chuyển trang)
+  // ---------------------------------------------------------------------------
+  var viewer = { i: 0, x0: null };
+  function openViewer(i) {
+    if (!state.pages.length) return;
+    viewer.i = Math.max(0, Math.min(state.pages.length - 1, i));
+    $('viewerImg').src = state.pages[viewer.i].url;
+    $('vInfo').textContent = (viewer.i + 1) + ' / ' + state.pages.length;
+    $('vPrev').disabled = viewer.i === 0;
+    $('vNext').disabled = viewer.i === state.pages.length - 1;
+    $('viewer').hidden = false;
+  }
+  function closeViewer() { $('viewer').hidden = true; }
 
   function exportPdf() { makePdf().then(function (pdf) { download(pdf, 'scan-' + stamp() + '.pdf'); }); }
 
   /** Dựng sẵn PDF mỗi khi danh sách trang thay đổi (để nút Chia sẻ mở được ngay). */
   function preparePdf() {
     state.pdfBlob = null;
+    $('pdfInfo').textContent = state.pages.length ? 'Đang tạo PDF…' : 'Chưa có trang nào — bấm "Chụp trang tiếp".';
     if (!state.pages.length) return;
-    var stampAt = state.pages.slice();
+    var stampAt = state.pages.slice(), light = $('chkLight').checked;
     makePdf().then(function (pdf) {
-      if (stampAt.length === state.pages.length && stampAt.every(function (p, i) { return p === state.pages[i]; })) state.pdfBlob = pdf;
+      var same = light === $('chkLight').checked && stampAt.length === state.pages.length &&
+        stampAt.every(function (p, i) { return p === state.pages[i]; });
+      if (!same) return;
+      state.pdfBlob = pdf;
+      $('pdfInfo').textContent = 'PDF ' + state.pages.length + ' trang · ' + fmtSize(pdf.size) + (light ? ' (file nhẹ)' : '');
     });
   }
 
@@ -574,6 +613,31 @@
     $('btnAdd').onclick = addPage;
     $('btnPages').onclick = function () { show('stepPages'); };
     $('btnMore').onclick = function () { show('stepPick'); };
+    $('fileCameraMore').addEventListener('change', function (e) { handleFiles(e.target.files); e.target.value = ''; });
+    $('chkLight').addEventListener('change', preparePdf);
+    $('vClose').onclick = closeViewer;
+    $('vPrev').onclick = function () { openViewer(viewer.i - 1); };
+    $('vNext').onclick = function () { openViewer(viewer.i + 1); };
+    $('vDel').onclick = function () {
+      var p = state.pages[viewer.i];
+      URL.revokeObjectURL(p.url);
+      state.pages.splice(viewer.i, 1);
+      renderPages();
+      if (state.pages.length) openViewer(Math.min(viewer.i, state.pages.length - 1)); else closeViewer();
+    };
+    $('viewer').addEventListener('touchstart', function (e) { viewer.x0 = e.touches.length === 1 ? e.touches[0].clientX : null; }, { passive: true });
+    $('viewer').addEventListener('touchend', function (e) {
+      if (viewer.x0 === null) return;
+      var dx = e.changedTouches[0].clientX - viewer.x0;
+      if (Math.abs(dx) > 60) openViewer(viewer.i + (dx < 0 ? 1 : -1));
+      viewer.x0 = null;
+    });
+    document.addEventListener('keydown', function (e) {
+      if ($('viewer').hidden) return;
+      if (e.key === 'Escape') closeViewer();
+      if (e.key === 'ArrowRight') openViewer(viewer.i + 1);
+      if (e.key === 'ArrowLeft') openViewer(viewer.i - 1);
+    });
     $('btnPdf').onclick = exportPdf;
     $('btnSharePdf').onclick = function () { shareFile(state.pdfBlob, 'scan-' + stamp() + '.pdf', 'application/pdf', 'Tài liệu scan'); };
     $('btnShareImg').onclick = function () { shareFile(state.resultBlob, 'scan-' + stamp() + '.jpg', 'image/jpeg', 'Ảnh scan'); };

@@ -104,6 +104,20 @@ main { flex: 1; display: flex; flex-direction: column; min-height: 0; }
 
 h2 { margin: 0; font-size: 18px; }
 .pages { flex: 1; display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 12px; align-content: start; overflow: auto; }
+.pages-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+.hint.center { text-align: center; margin: 0; }
+.page img { cursor: zoom-in; }
+.tips { font-size: 14px; color: var(--muted); background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 8px 12px; }
+.tips summary { cursor: pointer; color: var(--text); font-weight: 600; }
+.tips ul { margin: 8px 0 0; padding-left: 18px; display: grid; gap: 6px; }
+#chkLight { margin: 0 4px 0 0; accent-color: var(--accent); }
+.viewer {
+  position: fixed; inset: 0; z-index: 20; background: rgba(0,0,0,.92); display: flex; flex-direction: column;
+  padding: max(10px, env(safe-area-inset-top, 0px)) 10px max(10px, env(safe-area-inset-bottom, 0px));
+}
+.viewer img { flex: 1; min-height: 0; width: 100%; object-fit: contain; touch-action: pan-y pinch-zoom; }
+.viewer-bar { display: flex; gap: 8px; align-items: center; justify-content: center; flex-wrap: wrap; padding-top: 10px; color: #fff; }
+.viewer-bar span { min-width: 64px; text-align: center; font-variant-numeric: tabular-nums; }
 .page { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 8px; display: flex; flex-direction: column; gap: 6px; }
 .page img { width: 100%; aspect-ratio: 3 / 4; object-fit: contain; background: #fff; border-radius: 4px; }
 .page .row { display: flex; justify-content: space-between; align-items: center; font-size: 13px; color: var(--muted); }

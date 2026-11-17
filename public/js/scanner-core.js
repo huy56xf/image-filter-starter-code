@@ -474,6 +474,30 @@
     return n ? 0.6 * ok / n : 0;
   }
 
+  /**
+   * Mức độ (0..1) cạnh AB cắt NGANG QUA vùng chữ: có chữ ở CẢ HAI phía. Mép giấy thật chỉ có chữ
+   * ở phía trong (phía ngoài là mặt bàn); còn nếp gấp, mép bóng đổ, đường kẻ bảng thì chữ nằm cả hai bên.
+   */
+  function inkBothSides(ctx, A, B) {
+    var ink = ctx.ink, w = ctx.w, h = ctx.h;
+    if (!ink) return 0;
+    var dx = B.x - A.x, dy = B.y - A.y, len = Math.sqrt(dx * dx + dy * dy);
+    if (len < 8) return 0;
+    var nx = -dy / len, ny = dx / len, d0 = Math.max(3, Math.round(Math.max(w, h) / 100)), d1 = d0 * 4;
+    var n = 0, inA = 0, inB = 0;
+    for (var k = 1; k < 40; k++) {
+      var t = k / 40, px = A.x + dx * t, py = A.y + dy * t, a = 0, b = 0;
+      for (var o = d0; o <= d1 && !(a && b); o++) {
+        var x1 = Math.round(px + nx * o), y1 = Math.round(py + ny * o), x2 = Math.round(px - nx * o), y2 = Math.round(py - ny * o);
+        if (!a && x1 >= 0 && y1 >= 0 && x1 < w && y1 < h && ink[y1 * w + x1]) a = 1;
+        if (!b && x2 >= 0 && y2 >= 0 && x2 < w && y2 < h && ink[y2 * w + x2]) b = 1;
+      }
+      n++; inA += a; inB += b;
+    }
+    var m = Math.min(inA, inB) / n;
+    return clamp((m - 0.15) / 0.3, 0, 1);
+  }
+
   /** Điểm của cạnh thứ k của tứ giác q (dùng chung cho chấm nhanh Hough và chấm đầy đủ). */
   function sideScore(ctx, q, k, band, stepLen) {
     var A = q[k], B = q[(k + 1) % 4];
@@ -494,6 +518,7 @@
     // ảnh đã xoá chữ: mép giấy mờ vẫn rõ, đường kẻ/chữ đã biến mất
     // (hệ số 0.9: khi hoà, ưu tiên cạnh khớp biên ảnh gốc vì chính xác hơn ảnh đã làm mờ)
     if (ctx.gradC) s = Math.max(s, 0.9 * sideSupport(ctx.gradC, ctx.w, ctx.h, A, B, ctx.thrC, band, stepLen));
+    s *= 1 - 0.6 * inkBothSides(ctx, A, B); // nếp gấp / mép bóng chạy xuyên qua chữ ≠ mép giấy
     return { s: s, border: false };
   }
 
@@ -711,6 +736,31 @@
     // Nhánh "xoá chữ": closing → làm mượt → gradient. Biên còn lại chủ yếu là mép giấy.
     var closeR = Math.max(2, Math.round(Math.max(w, h) / 100));
     var closedRaw = grayClosing(rawGray, w, h, closeR);
+    // mặt nạ mực: nét MẢNH tối hơn nền cục bộ (chữ, nét kẻ) – phép đóng bán kính nhỏ nên sọc/hoa văn
+    // nền to bản không bị tính là chữ
+    var closedInk = grayClosing(rawGray, w, h, 3), inkMask = new Uint8Array(w * h);
+    for (var im = 0; im < w * h; im++) if (closedInk[im] - rawGray[im] > 22) inkMask[im] = 1;
+    // chữ = các mảnh nhỏ / dòng thấp; bỏ mảnh lớn cả hai chiều (sọc chéo, vân gỗ, mảng loang)
+    (function () {
+      var lim = Math.max(8, Math.round(Math.max(w, h) * 0.04)), lab = new Uint8Array(w * h), st = new Int32Array(w * h), list = [];
+      for (var s0 = 0; s0 < w * h; s0++) {
+        if (!inkMask[s0] || lab[s0]) continue;
+        var sp = 0, x0 = w, x1 = 0, y0 = h, y1 = 0; list.length = 0;
+        st[sp++] = s0; lab[s0] = 1;
+        while (sp > 0) {
+          var q = st[--sp], qx = q % w, qy = (q / w) | 0; list.push(q);
+          if (qx < x0) x0 = qx; if (qx > x1) x1 = qx; if (qy < y0) y0 = qy; if (qy > y1) y1 = qy;
+          for (var dy = -1; dy <= 1; dy++) for (var dx = -1; dx <= 1; dx++) {
+            var nx = qx + dx, ny = qy + dy;
+            if (nx < 0 || ny < 0 || nx >= w || ny >= h) continue;
+            var nq = ny * w + nx;
+            if (inkMask[nq] && !lab[nq]) { lab[nq] = 1; st[sp++] = nq; }
+          }
+        }
+        // từ chữ có thể dài nhưng thấp (hoặc hẹp nếu xoay) → chỉ bỏ mảnh lớn theo CẢ HAI chiều
+        if ((x1 - x0 > lim && y1 - y0 > lim) || x1 - x0 > w * 0.5 || y1 - y0 > h * 0.5) for (var t = 0; t < list.length; t++) inkMask[list[t]] = 0;
+      }
+    })();
     var grayC = gaussianBlur(closedRaw, w, h, 2);
     var gradC = sobel(grayC, w, h);
     var hiC = Math.max(16, percentile(gradC.mag, 0.92)), loC = hiC * 0.4;
@@ -718,7 +768,7 @@
 
     var candidates = [];
     var sctx = { grad: grad, gray: rawGray, rgba: small.data, w: w, h: h, thr: supportThr, paperRef: percentile(rawGray, 0.92),
-                 gradC: gradC, thrC: thrC };
+                 gradC: gradC, thrC: thrC, ink: inkMask };
     function addFromComp(c, tag) {
       var hull = convexHull(c.points);
       if (hull.length < 4) return;
@@ -792,7 +842,7 @@
       });
     });
 
-    if (opts.debug) opts.debug.candidates = candidates, opts.debug.scoreQuad = function (q) { return scoreQuad(q, sctx); }, opts.debug.sc = sc, opts.debug.grayC = grayC, opts.debug.gradC = gradC, opts.debug.w = w, opts.debug.h = h, opts.debug.thrC = thrC;
+    if (opts.debug) opts.debug.candidates = candidates, opts.debug.scoreQuad = function (q) { return scoreQuad(q, sctx); }, opts.debug.sc = sc, opts.debug.grayC = grayC, opts.debug.gradC = gradC, opts.debug.w = w, opts.debug.h = h, opts.debug.thrC = thrC, opts.debug.sctx = sctx, opts.debug.inkBothSides = inkBothSides;
     // cả 4 cạnh trùng khung hình = không thấy mép giấy nào → dùng cả ảnh, báo chưa chắc chắn
     if (best && best.borderSides === 4) best = null;
     var found = !!best && best.minSupport >= 0.35 && best.score >= 0.4;
@@ -1125,8 +1175,10 @@
    * bóng đậm sát mép) nằm trong dải sát mép ảnh và NỐI LIỀN với mép ảnh.
    * Chữ không chạm mép nên giữ nguyên. Kết quả: trang vuông vắn, không lẹm góc.
    */
-  function cleanBorders(img, bandFrac) {
-    // Tìm vùng cần tô trên ảnh thu nhỏ (nhanh), rồi tô ở độ phân giải đầy đủ chỉ trong dải sát mép.
+  function cleanBorders(img, target, bandFrac) {
+    // Tìm vùng NỀN trên ảnh gốc `img` (thu nhỏ cho nhanh), rồi tô màu giấy lên `target`
+    // (ảnh đã khử bóng) ở độ phân giải đầy đủ, chỉ trong dải sát mép.
+    target = target || img;
     var W = img.width, H = img.height, D = img.data;
     var ds = downscale(img, 1000), sm = ds.image, w = sm.width, h = sm.height, d = sm.data, n = w * h, i;
     var g = toGray(sm), ref = percentile(g, 0.9);
@@ -1134,10 +1186,19 @@
     // màu giấy: trung bình các điểm sáng (nền giấy)
     var pr = 0, pg = 0, pb = 0, pc = 0;
     for (i = 0; i < n; i += 3) if (g[i] >= ref * 0.92) { pr += d[i * 4]; pg += d[i * 4 + 1]; pb += d[i * 4 + 2]; pc++; }
-    if (!pc) return img;
+    if (!pc) return target;
     pr /= pc; pg /= pc; pb /= pc;
-    var psat = Math.max(pr, pg, pb) - Math.min(pr, pg, pb);
-    function notPaperRGB(r, gg, b, L) { return L < ref * 0.8 || Math.max(r, gg, b) - Math.min(r, gg, b) > psat + 45; }
+    var psat = Math.max(pr, pg, pb) - Math.min(pr, pg, pb), ps = pr + pg + pb;
+    // NỀN (không phải giấy): tối hẳn, hoặc khác MÀU giấy (sắc độ / độ bão hoà).
+    // Giấy nằm trong bóng chỉ tối đi mà vẫn giữ màu giấy → KHÔNG bị coi là nền.
+    function notPaperRGB(r, gg, b, L) {
+      if (L < ref * 0.45) return true;
+      if (Math.max(r, gg, b) - Math.min(r, gg, b) > psat + 45) return true;
+      var sum = r + gg + b;
+      if (sum < 30) return true;
+      var chroma = Math.abs(r / sum - pr / ps) + Math.abs(gg / sum - pg / ps) + Math.abs(b / sum - pb / ps);
+      return L < ref * 0.85 && chroma > 0.06;
+    }
     function inBand(x, y) { return x < band || y < band || x >= w - band || y >= h - band; }
     // Chỉ lan qua mảng "không phải giấy" DÀY (nền, góc gấp): co mặt nạ bán kính rr để loại nét chữ
     // mảnh, nếu không vùng tô sẽ lan theo nét chữ sát mép và xoá mất chữ.
@@ -1165,11 +1226,16 @@
       if (y > 0 && inBand(x, y - 1)) seed(k - w);
       if (y < h - 1 && inBand(x, y + 1)) seed(k + w);
     }
-    if (!filled) return img;
+    if (!filled) return target;
     var grown = maxFilter(mark, w, h, rr + 1); // nở lại phần đã co
+    // màu tô = màu giấy của ảnh đích (ảnh đã khử bóng thì gần như trắng)
+    var T = target.data, tg = toGray(downscale(target, 400).image), tref = percentile(tg, 0.9), qr = 0, qg = 0, qb = 0, qc = 0;
+    var tds = downscale(target, 400).image.data;
+    for (i = 0; i < tg.length; i++) if (tg[i] >= tref * 0.95) { qr += tds[i * 4]; qg += tds[i * 4 + 1]; qb += tds[i * 4 + 2]; qc++; }
+    if (qc) { pr = qr / qc; pg = qg / qc; pb = qb / qc; }
     // tô ở độ phân giải đầy đủ, chỉ trong dải sát mép
     var out = createImage(W, H);
-    out.data.set(D);
+    out.data.set(T);
     var sx = w / W, sy = h / H, BW = Math.ceil((band + rr + 2) / sx), BH = Math.ceil((band + rr + 2) / sy);
     for (var Y = 0; Y < H; Y++) {
       var yS = Math.min(h - 1, (Y * sy) | 0), rowBand = Y < BH || Y >= H - BH;
@@ -1189,19 +1255,20 @@
    * @param mode 'original' | 'magic' (màu, nền trắng) | 'gray' | 'bw' (đen trắng)
    */
   function enhance(img, mode) {
-    if (mode !== 'original') img = cleanBorders(img);
+    if (mode === 'original') return img;
+    // Khử bóng TRƯỚC, dọn mép SAU: sau khi chuẩn hoá ánh sáng, giấy nằm trong bóng trở lại trắng
+    // nên không bị nhầm là nền bàn (trước đây dọn mép trên ảnh gốc → xoá mất chữ trong vùng bóng).
+    var norm = cleanBorders(img, normalizeIllumination(img));
     switch (mode) {
-      case 'original':
-        return img;
       case 'gray': {
-        var n1 = levels(normalizeIllumination(img), 0.01, 0.6, 1.2, 225);
+        var n1 = levels(norm, 0.01, 0.6, 1.2, 225);
         return grayImage(toGray(n1), n1.width, n1.height);
       }
       case 'bw':
-        return binarize(normalizeIllumination(img));
+        return binarize(norm);
       case 'magic':
       default:
-        return saturate(levels(normalizeIllumination(img), 0.005, 0.5, 1.35, 222), 1.25);
+        return saturate(levels(norm, 0.005, 0.5, 1.35, 222), 1.25);
     }
   }
 
