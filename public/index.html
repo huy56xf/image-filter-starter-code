@@ -102,15 +102,50 @@
 
     <!-- Danh sách trang -->
     <section id="stepPages" class="step">
-      <h2>Tài liệu</h2>
+      <div class="pages-head">
+        <h2>Tài liệu</h2>
+        <span class="hint">Bấm vào trang để xem lớn</span>
+      </div>
       <div id="pageList" class="pages"></div>
       <div class="toolbar">
-        <button class="btn" id="btnMore">+ Quét thêm trang</button>
-        <button class="btn" id="btnPdf">Tải PDF</button>
-        <button class="btn primary" id="btnSharePdf">Chia sẻ PDF (Zalo, OneDrive…)</button>
+        <label class="btn primary">
+          <input id="fileCameraMore" type="file" accept="image/*" capture="environment" hidden>
+          📷 Chụp trang tiếp
+        </label>
+        <button class="btn" id="btnMore">+ Thêm ảnh / Quét trực tiếp</button>
       </div>
-      <p id="shareMsg" class="hint" hidden></p>
+      <div class="toolbar">
+        <label class="btn" for="chkLight"><input type="checkbox" id="chkLight"> File nhẹ (gửi nhanh)</label>
+        <button class="btn" id="btnPdf">Tải PDF</button>
+        <button class="btn primary" id="btnSharePdf">Chia sẻ PDF</button>
+      </div>
+      <p id="pdfInfo" class="hint center"></p>
+      <p id="shareMsg" class="hint center" hidden></p>
+      <details class="tips">
+        <summary>Gửi sang laptop khi mạng chậm hoặc không có mạng</summary>
+        <ul>
+          <li><b>Mạng chậm:</b> bật <i>File nhẹ</i> (giảm dung lượng nhiều lần, chữ vẫn đọc rõ) rồi Chia sẻ → Zalo / OneDrive.</li>
+          <li><b>Không cần Internet – app LocalSend</b> (miễn phí, có cho iPhone, Windows, Mac): điện thoại và laptop chung Wi-Fi
+            hoặc laptop bắt điểm phát Wi-Fi của iPhone → Chia sẻ PDF → LocalSend → chọn laptop.</li>
+          <li><b>MacBook:</b> Chia sẻ PDF → AirDrop.</li>
+          <li><b>Cáp USB (Windows):</b> Chia sẻ → <i>Lưu vào Tệp</i> (hoặc lưu ảnh JPG vào Ảnh), cắm cáp, mở ứng dụng
+            Apple Devices / Ảnh trên Windows để lấy file.</li>
+          <li>iPhone không gửi file qua Bluetooth sang laptop Windows được (Apple chặn), nên dùng các cách trên.</li>
+        </ul>
+      </details>
     </section>
+
+    <!-- Xem lớn từng trang -->
+    <div id="viewer" class="viewer" hidden>
+      <img id="viewerImg" alt="">
+      <div class="viewer-bar">
+        <button class="btn" id="vPrev" aria-label="Trang trước">‹</button>
+        <span id="vInfo"></span>
+        <button class="btn" id="vNext" aria-label="Trang sau">›</button>
+        <button class="btn" id="vDel">Xoá trang</button>
+        <button class="btn primary" id="vClose">Đóng</button>
+      </div>
+    </div>
   </main>
 
   <script src="js/scanner-core.js"></script>

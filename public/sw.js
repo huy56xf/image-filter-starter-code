@@ -3,7 +3,7 @@
  * (mọi xử lý ảnh đều chạy trên máy, không cần server).
  * Đổi VERSION mỗi khi phát hành bản mới để điện thoại tải lại.
  */
-var VERSION = 'scanner-v2';
+var VERSION = 'scanner-v3';
 var FILES = [
   './', 'index.html', 'manifest.webmanifest',
   'css/app.css', 'js/scanner-core.js', 'js/pdf.js', 'js/app.js',
