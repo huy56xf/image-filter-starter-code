@@ -25,14 +25,18 @@ export interface ScanResult {
 //    ảnh kết quả (JPEG, hoặc PNG với chế độ bw) + thông tin nhận diện
 export async function scanImage(input: Buffer | string, mode: ScanMode = "magic"): Promise<ScanResult> {
   const photo = await Jimp.read(input as any);
+  // tiêu cự thật từ EXIF (ảnh gốc từ điện thoại) → tỉ lệ khổ giấy chính xác sau khi nắn
+  let focal: number | null = Buffer.isBuffer(input) ? DocScanner.focalFromExif(input, photo.bitmap.width, photo.bitmap.height) : null;
+  const origW = photo.bitmap.width;
   // Giới hạn độ phân giải làm việc ~300dpi khổ A4 để xử lý nhanh
   const maxSide = 2600;
   if (Math.max(photo.bitmap.width, photo.bitmap.height) > maxSide) {
     if (photo.bitmap.width >= photo.bitmap.height) photo.resize(maxSide, Jimp.AUTO);
     else photo.resize(Jimp.AUTO, maxSide);
   }
+  if (focal) focal *= photo.bitmap.width / origW;
   const img = { data: photo.bitmap.data, width: photo.bitmap.width, height: photo.bitmap.height };
-  const res = DocScanner.scan(img, { mode });
+  const res = DocScanner.scan(img, { mode, focal });
   const out = new Jimp(res.image.width, res.image.height);
   out.bitmap.data = Buffer.from(res.image.data.buffer, res.image.data.byteOffset, res.image.data.length);
   const mime = mode === "bw" ? Jimp.MIME_PNG : Jimp.MIME_JPEG;
