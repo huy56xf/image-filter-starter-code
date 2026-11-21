@@ -84,7 +84,11 @@
         <button data-mode="gray" class="filter">Xám</button>
         <button data-mode="bw" class="filter">Đen trắng</button>
         <button data-mode="original" class="filter">Gốc</button>
+        <label class="btn" for="chkDewarp" title="Nắn thẳng dòng chữ, khung bảng khi giấy bị cong">
+          <input type="checkbox" id="chkDewarp" checked> Nắn cong
+        </label>
       </div>
+      <p id="dewarpInfo" class="hint center"></p>
       <div class="stage result">
         <canvas id="resultCanvas"></canvas>
         <div id="busy" class="busy" hidden><div class="spinner"></div></div>

@@ -368,12 +368,23 @@
     var key = JSON.stringify(corners);
     if (!state.warped || state.warpedKey !== key) {
       // focal: tiêu cự thật từ EXIF (nếu có) → tỉ lệ khổ giấy chính xác
-      state.warped = DocScanner.warpPerspective(state.src, corners, { focal: state.focal });
+      var w = DocScanner.warpPerspective(state.src, corners, { focal: state.focal });
+      // tự xoay theo chữ (trang nằm ngang / lộn ngược) TRƯỚC khi nắn cong (cần dòng chữ nằm ngang);
+      // nút xoay tay chỉnh tiếp trên kết quả
+      state.warped = DocScanner.rotateBy(w, DocScanner.detectOrientation(w));
       state.warpedKey = key;
-      // tự xoay theo chữ (trang nằm ngang / lộn ngược); nút xoay tay chỉnh tiếp từ đây
-      state.rotation = DocScanner.detectOrientation(state.warped) / 90;
+      state.rotation = 0;
+      state.dewarped = null; // tính khi cần
     }
-    var out = DocScanner.enhance(state.warped, state.mode);
+    var base = state.warped;
+    if ($('chkDewarp').checked) {
+      if (!state.dewarped) state.dewarped = DocScanner.dewarpPage(state.warped);
+      base = state.dewarped.image;
+      $('dewarpInfo').textContent = state.dewarped.applied
+        ? 'Đã nắn ' + state.dewarped.lines + ' dòng (lệch tối đa ' + Math.round(state.dewarped.maxShift) + ' px)'
+        : (state.dewarped.lines >= 3 ? 'Trang đã phẳng' : 'Không đủ dòng chữ để nắn');
+    } else $('dewarpInfo').textContent = '';
+    var out = DocScanner.enhance(base, state.mode);
     for (var r = 0; r < state.rotation; r++) out = DocScanner.rotate90(out, true);
     state.result = toCanvas(out);
     // chuẩn bị sẵn file JPEG: trên iPhone, bảng chia sẻ phải mở NGAY trong lúc bấm nút
@@ -606,6 +617,7 @@
       };
     });
     $('btnRecrop').onclick = function () { show('stepCrop'); };
+    $('chkDewarp').addEventListener('change', rescan);
     $('btnRotL').onclick = function () { state.rotation = (state.rotation + 3) % 4; rescan(); };
     $('btnRotR').onclick = function () { state.rotation = (state.rotation + 1) % 4; rescan(); };
     $('btnJpg').onclick = function () { exportImage('image/jpeg', 'jpg'); };

@@ -1433,6 +1433,176 @@
     return votes[3] >= votes[1] ? 90 : 270;
   }
 
+  /**
+   * NẮN CONG trang (giấy cong, gáy sách, giấy bị võng) sau khi đã nắn phối cảnh và xoay đúng chiều.
+   *  1. Tìm các dòng chữ / đường kẻ ngang: mặt nạ mực → bỏ nét dọc dài (cột bảng) → "bôi" ngang
+   *     để mỗi dòng thành một dải liền → lấy các dải dài, mảnh.
+   *  2. Mỗi dòng: đường tâm y = f(x) (đa thức bậc 5, loại điểm lệch) → độ cong so với chính nó.
+   *  3. Dựng trường dịch chuyển DỌC trơn trên cả trang: dy(x,y) = Σ c_ij·P_i(x)·P_j(y)
+   *     (bậc 5 theo x, ≤2 theo y), khớp bình phương tối thiểu từ mọi dòng.
+   *  4. Ánh xạ lại: điểm (x,y) lấy từ (x, y + dy). Chỉ dịch dọc, trường biến đổi chậm hơn nhiều so với
+   *     cỡ chữ → mỗi chữ chỉ bị dời nguyên khối, không méo; dòng chữ và đường kẻ bảng thẳng lại.
+   * An toàn: ít dòng đáng tin, độ cong quá nhỏ (đã thẳng) hoặc bất thường → giữ nguyên ảnh.
+   * @returns {{image, applied: boolean, lines: number, maxShift: number}}
+   */
+  function dewarpPage(img, opts) {
+    opts = opts || {};
+    var ds = downscale(img, 1200), sm = ds.image, sc = ds.scale, w = sm.width, h = sm.height, n = w * h, i, x, y;
+    // cửa sổ đủ rộng để bắt cả nét chữ đậm (tiêu đề in đậm cỡ lớn)
+    var g = toGray(sm), bg = grayClosing(g, w, h, Math.max(3, Math.round(w / 200)));
+    var ink = new Uint8Array(n);
+    for (i = 0; i < n; i++) if (bg[i] - g[i] > 30) ink[i] = 1;
+    var none = { image: img, applied: false, lines: 0, maxShift: 0 };
+    // bỏ nét dọc dài (cột bảng, mép) để các dòng không dính vào nhau theo chiều dọc
+    var vRun = Math.max(6, Math.round(h * 0.02)), a, k;
+    for (x = 0; x < w; x++) for (y = 0; y < h;) {
+      if (!ink[y * w + x]) { y++; continue; }
+      for (a = y; a < h && ink[a * w + x]; a++);
+      if (a - y > vRun) for (k = y; k < a; k++) ink[k * w + x] = 0;
+      y = a;
+    }
+    // bỏ mảnh mực nhỏ (dấu thanh, dấu chấm…): chúng nằm giữa hai dòng, dễ làm dính dòng trên với dòng dưới
+    (function () {
+      var lb = new Int32Array(n), stk = new Int32Array(n), sizes = [], pix = [], cid = 0;
+      for (var s0 = 0; s0 < n; s0++) {
+        if (!ink[s0] || lb[s0]) continue;
+        cid++;
+        var sp0 = 0, list = [];
+        stk[sp0++] = s0; lb[s0] = cid;
+        while (sp0 > 0) {
+          var q0 = stk[--sp0], x0q = q0 % w, y0q = (q0 / w) | 0; list.push(q0);
+          for (var ddy = -1; ddy <= 1; ddy++) for (var ddx = -1; ddx <= 1; ddx++) {
+            var nx0 = x0q + ddx, ny0 = y0q + ddy;
+            if (nx0 < 0 || ny0 < 0 || nx0 >= w || ny0 >= h) continue;
+            var nq0 = ny0 * w + nx0;
+            if (ink[nq0] && !lb[nq0]) { lb[nq0] = cid; stk[sp0++] = nq0; }
+          }
+        }
+        sizes.push(list.length); pix.push(list);
+      }
+      if (!sizes.length) return;
+      var sorted = sizes.slice().sort(function (p1, p2) { return p1 - p2; }), med = sorted[sorted.length >> 1];
+      for (var c0 = 0; c0 < sizes.length; c0++) if (sizes[c0] < med * 0.35) for (var t0 = 0; t0 < pix[c0].length; t0++) ink[pix[c0][t0]] = 0;
+    })();
+    // "bôi" ngang: nối các chữ trong cùng dòng thành một dải
+    var kx = Math.max(3, Math.round(w * 0.012)), smear = new Uint8Array(n);
+    for (y = 0; y < h; y++) {
+      var last = -1e9;
+      for (x = 0; x < w; x++) {
+        if (ink[y * w + x]) { if (x - last <= kx * 2) for (k = Math.max(0, last); k <= x; k++) smear[y * w + k] = 1; smear[y * w + x] = 1; last = x; }
+      }
+    }
+    // thành phần liên thông của các dải
+    var lab = new Int32Array(n), st = new Int32Array(n), comps = [], id = 0;
+    for (i = 0; i < n; i++) {
+      if (!smear[i] || lab[i]) continue;
+      id++;
+      var sp = 0, x0 = w, x1 = 0, y0 = h, y1 = 0;
+      st[sp++] = i; lab[i] = id;
+      while (sp > 0) {
+        var q = st[--sp], qx = q % w, qy = (q / w) | 0;
+        if (qx < x0) x0 = qx; if (qx > x1) x1 = qx; if (qy < y0) y0 = qy; if (qy > y1) y1 = qy;
+        if (qx > 0 && smear[q - 1] && !lab[q - 1]) { lab[q - 1] = id; st[sp++] = q - 1; }
+        if (qx < w - 1 && smear[q + 1] && !lab[q + 1]) { lab[q + 1] = id; st[sp++] = q + 1; }
+        if (qy > 0 && smear[q - w] && !lab[q - w]) { lab[q - w] = id; st[sp++] = q - w; }
+        if (qy < h - 1 && smear[q + w] && !lab[q + w]) { lab[q + w] = id; st[sp++] = q + w; }
+      }
+      comps[id] = { x0: x0, x1: x1, y0: y0, y1: y1 };
+    }
+    // đường tâm mỗi dòng
+    function polyFit(xs, ys, deg) {
+      var m = deg + 1, A = [], bb = [], r, c;
+      for (r = 0; r < m; r++) { A.push(new Array(m).fill(0)); bb.push(0); }
+      for (var t = 0; t < xs.length; t++) {
+        var pw = [1];
+        for (c = 1; c < m; c++) pw.push(pw[c - 1] * xs[t]);
+        for (r = 0; r < m; r++) { bb[r] += pw[r] * ys[t]; for (c = 0; c < m; c++) A[r][c] += pw[r] * pw[c]; }
+      }
+      for (r = 0; r < m; r++) A[r][r] += 1e-6;
+      try { return solve(A, bb); } catch (e) { return null; }
+    }
+    function polyVal(co, u) { var v = 0, pw = 1; for (var t = 0; t < co.length; t++) { v += co[t] * pw; pw *= u; } return v; }
+    var XD = opts.xDegree || 5; // bậc theo chiều ngang: đủ ôm chỗ cong gấp ở gáy sách
+    var samples = [], nLines = 0, vmin = 1, vmax = -1, umin = 1, umax = -1;
+    for (var L = 1; L <= id; L++) {
+      var cpt = comps[L], cw = cpt.x1 - cpt.x0, ch = cpt.y1 - cpt.y0 + 1;
+      if (cw < w * 0.15 || ch > h * 0.045 || cw < ch * 6) continue;
+      var xs = [], ys = [];
+      for (x = cpt.x0; x <= cpt.x1; x += 2) {
+        var sy = 0, cnt = 0;
+        for (y = cpt.y0; y <= cpt.y1; y++) { var j = y * w + x; if (lab[j] === L && ink[j]) { sy += y; cnt++; } }
+        if (cnt) { xs.push(x / w * 2 - 1); ys.push(sy / cnt); }
+      }
+      if (xs.length < 15) continue;
+      var co = polyFit(xs, ys, XD);
+      if (!co) continue;
+      var res = xs.map(function (u, t) { return ys[t] - polyVal(co, u); });
+      var rms = Math.sqrt(res.reduce(function (s2, r2) { return s2 + r2 * r2; }, 0) / res.length);
+      var kxs = [], kys = [];
+      for (var t2 = 0; t2 < xs.length; t2++) if (Math.abs(res[t2]) <= 2.5 * rms + 0.5) { kxs.push(xs[t2]); kys.push(ys[t2]); }
+      co = polyFit(kxs, kys, XD);
+      if (!co || kxs.length < 12) continue;
+      var r2s = 0;
+      for (t2 = 0; t2 < kxs.length; t2++) { var e = kys[t2] - polyVal(co, kxs[t2]); r2s += e * e; }
+      if (Math.sqrt(r2s / kxs.length) > Math.max(1.5, ch * 0.3)) continue; // không phải dòng sạch
+      var ua = kxs[0], ub = kxs[kxs.length - 1], mean = 0, NS = 24;
+      for (t2 = 0; t2 <= NS; t2++) mean += polyVal(co, ua + (ub - ua) * t2 / NS);
+      mean /= NS + 1;
+      var vb = mean / h * 2 - 1;
+      for (t2 = 0; t2 <= NS; t2++) {
+        var uu = ua + (ub - ua) * t2 / NS;
+        samples.push({ u: uu, v: vb, d: polyVal(co, uu) - mean, wgt: (ub - ua) });
+      }
+      nLines++;
+      if (vb < vmin) vmin = vb; if (vb > vmax) vmax = vb;
+      if (ua < umin) umin = ua; if (ub > umax) umax = ub;
+    }
+    if (nLines < 3) return none;
+    // trường dịch chuyển trơn: bậc 3 theo x, bậc ≤2 theo y (ít dòng → bậc 1)
+    var dy = nLines >= 8 ? 2 : 1, terms = [];
+    for (var pi = 0; pi <= XD; pi++) for (var pj = 0; pj <= dy; pj++) terms.push([pi, pj]);
+    var M = terms.length, AA = [], BB = [];
+    for (i = 0; i < M; i++) { AA.push(new Array(M).fill(0)); BB.push(0); }
+    function basis(u, v) { return terms.map(function (tm) { return Math.pow(u, tm[0]) * Math.pow(v, tm[1]); }); }
+    samples.forEach(function (s3) {
+      var bs = basis(s3.u, s3.v);
+      for (var r = 0; r < M; r++) { BB[r] += s3.wgt * bs[r] * s3.d; for (var c = 0; c < M; c++) AA[r][c] += s3.wgt * bs[r] * bs[c]; }
+    });
+    for (i = 0; i < M; i++) AA[i][i] += 1e-3;
+    var cf;
+    try { cf = solve(AA, BB); } catch (e) { return none; }
+    var mg = 0.05;
+    function field(xp, yp) { // xp, yp: toạ độ ảnh nhỏ
+      var u = clamp(xp / w * 2 - 1, umin - mg, umax + mg), v = clamp(yp / h * 2 - 1, vmin - mg, vmax + mg);
+      var bs = basis(u, v), sum = 0;
+      for (var r = 0; r < M; r++) sum += cf[r] * bs[r];
+      return sum;
+    }
+    // lưới dịch chuyển ở độ phân giải thấp (trơn) → nội suy cho ảnh đầy đủ
+    var GS = 8, gw = Math.ceil(w / GS) + 1, gh = Math.ceil(h / GS) + 1, grid = new Float32Array(gw * gh), maxD = 0;
+    for (var gy = 0; gy < gh; gy++) for (var gx = 0; gx < gw; gx++) {
+      var dv = field(gx * GS, gy * GS);
+      grid[gy * gw + gx] = dv;
+      if (Math.abs(dv) > maxD) maxD = Math.abs(dv);
+    }
+    if (maxD < (opts.minShift === undefined ? 2 : opts.minShift)) return { image: img, applied: false, lines: nLines, maxShift: maxD / sc };
+    if (maxD > h * 0.08) return { image: img, applied: false, lines: nLines, maxShift: maxD / sc };
+    var W = img.width, H = img.height, out = createImage(W, H), sd = img.data, od = out.data;
+    for (var Y = 0; Y < H; Y++) {
+      var gyf = Y * sc / GS, gy0 = Math.min(gh - 2, Math.floor(gyf)), fy = gyf - gy0;
+      for (var X = 0; X < W; X++) {
+        var gxf = X * sc / GS, gx0 = Math.min(gw - 2, Math.floor(gxf)), fx = gxf - gx0;
+        var d00 = grid[gy0 * gw + gx0], d10 = grid[gy0 * gw + gx0 + 1], d01 = grid[(gy0 + 1) * gw + gx0], d11 = grid[(gy0 + 1) * gw + gx0 + 1];
+        var dd = (d00 * (1 - fx) + d10 * fx) * (1 - fy) + (d01 * (1 - fx) + d11 * fx) * fy;
+        var syy = Y + dd / sc, yy0 = Math.floor(syy), f = syy - yy0, ya = clamp(yy0, 0, H - 1), yb = clamp(yy0 + 1, 0, H - 1);
+        var o = (Y * W + X) * 4, pa = (ya * W + X) * 4, pb = (yb * W + X) * 4;
+        od[o] = sd[pa] + (sd[pb] - sd[pa]) * f; od[o + 1] = sd[pa + 1] + (sd[pb + 1] - sd[pa + 1]) * f;
+        od[o + 2] = sd[pa + 2] + (sd[pb + 2] - sd[pa + 2]) * f; od[o + 3] = 255;
+      }
+    }
+    return { image: out, applied: true, lines: nLines, maxShift: maxD / sc };
+  }
+
   function rotateBy(img, deg) {
     deg = ((deg % 360) + 360) % 360;
     if (deg === 90) return rotate90(img, true);
@@ -1447,7 +1617,9 @@
     var det = opts.corners ? { corners: opts.corners, found: true, confidence: 1, method: 'manual' } : detectDocument(img);
     var warped = warpPerspective(img, det.corners, { maxSide: opts.maxSide, focal: opts.focal });
     if (opts.autoRotate !== false) warped = rotateBy(warped, detectOrientation(warped));
-    return { image: enhance(warped, opts.mode || 'magic'), detection: det };
+    var dw = opts.dewarp === false ? null : dewarpPage(warped);
+    if (dw && dw.applied) warped = dw.image;
+    return { image: enhance(warped, opts.mode || 'magic'), detection: det, dewarped: !!(dw && dw.applied) };
   }
 
   return {
@@ -1461,6 +1633,7 @@
     enhance: enhance,
     rotate90: rotate90,
     rotateBy: rotateBy,
+    dewarpPage: dewarpPage,
     detectOrientation: detectOrientation,
     downscale: downscale,
     scan: scan

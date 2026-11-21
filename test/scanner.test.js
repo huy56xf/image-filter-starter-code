@@ -205,5 +205,28 @@ function check(name, cond, detail) {
   check('tỉ lệ A4 khi chụp nghiêng', !bad, res.join(', ') + ' (A4 = 0.707)');
 })();
 
+// Nắn cong: trang có dòng bị võng/cong gáy sách → dòng thẳng lại; trang phẳng giữ nguyên
+(function () {
+  var flat = flatPage(800, 1130, { seed: 11 }), W = 800, H = 1130, res = [], bad = 0;
+  var kinds = {
+    'võng': function (u, v) { return 22 * Math.sin(Math.PI * u) * (0.5 + v); },
+    'gáy sách': function (u, v) { return 40 * Math.pow(Math.max(0, 0.35 - u) / 0.35, 2) * (0.6 + 0.8 * v); }
+  };
+  var keep = DS.dewarpPage(flat);
+  if (keep.applied) bad++;
+  res.push('trang phẳng: ' + (keep.applied ? 'bị nắn (sai)' : 'giữ nguyên'));
+  Object.keys(kinds).forEach(function (k) {
+    var D = kinds[k], bent = { data: new Uint8ClampedArray(W * H * 4), width: W, height: H };
+    for (var y = 0; y < H; y++) for (var x = 0; x < W; x++) {
+      var sy = Math.round(y - D(x / W, y / H)), o = (y * W + x) * 4, si = (Math.min(H - 1, Math.max(0, sy)) * W + x) * 4;
+      bent.data[o] = bent.data[o + 1] = bent.data[o + 2] = flat.data[si]; bent.data[o + 3] = 255;
+    }
+    var before = DS.dewarpPage(bent, { minShift: 0 }).maxShift, r = DS.dewarpPage(bent), after = DS.dewarpPage(r.image, { minShift: 0 }).maxShift;
+    if (!r.applied || after > before * 0.3) bad++;
+    res.push(k + ': cong ' + before.toFixed(1) + 'px → ' + after.toFixed(1) + 'px');
+  });
+  check('nắn cong trang', !bad, res.join(', '));
+})();
+
 if (failed) { console.log(failed + ' kiểm thử thất bại'); process.exit(1); }
 console.log('Tất cả kiểm thử đều đạt');
