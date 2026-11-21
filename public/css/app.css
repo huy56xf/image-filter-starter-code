@@ -110,6 +110,7 @@ h2 { margin: 0; font-size: 18px; }
 .tips { font-size: 14px; color: var(--muted); background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 8px 12px; }
 .tips summary { cursor: pointer; color: var(--text); font-weight: 600; }
 .tips ul { margin: 8px 0 0; padding-left: 18px; display: grid; gap: 6px; }
+#chkDewarp { margin: 0 4px 0 0; accent-color: var(--accent); }
 #chkLight { margin: 0 4px 0 0; accent-color: var(--accent); }
 .viewer {
   position: fixed; inset: 0; z-index: 20; background: rgba(0,0,0,.92); display: flex; flex-direction: column;

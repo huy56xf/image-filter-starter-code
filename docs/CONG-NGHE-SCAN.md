@@ -94,6 +94,23 @@ pháp của *Zhang & He (2007), "Whiteboard scanning and image enhancement"*: t�
 rồi tính đúng tỉ lệ rộng/cao. Nếu kết quả gần khổ chuẩn (A4 = 1:√2, Letter) thì "bắt dính" vào tỉ lệ đó.
 Ảnh được cắt lẹm vào ~0.6% để bỏ viền nền sát mép.
 
+### 3.1 Nắn cong (giấy cong, gáy sách, giấy võng)
+
+Phép biến đổi phối cảnh chỉ đúng với mặt phẳng. Giấy cong thì sau bước trên các dòng chữ vẫn lượn. Ứng dụng nắn
+tiếp dựa trên chính nội dung trang (sau khi đã xoay đúng chiều):
+
+1. Mặt nạ mực → bỏ nét dọc dài (cột bảng) và mảnh nhỏ (dấu thanh, để dòng trên/dưới không dính nhau)
+   → "bôi" ngang để mỗi dòng chữ / đường kẻ ngang thành một dải.
+2. Mỗi dải dài, mảnh: đường tâm `y = f(x)` (đa thức bậc 5, loại điểm lệch, bỏ dòng không sạch).
+3. Trường dịch chuyển **dọc** trơn trên cả trang `dy(x,y) = Σ c_ij·x^i·y^j` (bậc 5 theo x, ≤ 2 theo y), khớp bình
+   phương tối thiểu từ độ lệch của mọi dòng so với chính nó (nên cũng khử luôn độ nghiêng còn sót).
+4. Ánh xạ lại `(x, y) ← (x, y + dy)`. Chỉ dịch dọc, và trường biến đổi chậm hơn nhiều so với cỡ chữ → mỗi chữ chỉ được
+   dời nguyên khối, **không bị méo**; dòng chữ và đường kẻ bảng thẳng lại.
+
+An toàn: < 3 dòng đáng tin, độ cong < 2px (trang đã phẳng) hoặc lớn bất thường → giữ nguyên. Có thể tắt bằng ô
+**Nắn cong** ở màn kết quả. (Các app thương mại còn dùng mô hình 3D mặt giấy hoặc học sâu để nắn cả chiều ngang
+— chữ sát gáy sách bị co lại; ở đây cố ý chỉ nắn dọc để không làm biến dạng chữ.)
+
 ## 4. Tăng cường "như máy scan"
 
 Máy scan chiếu sáng đều; ảnh điện thoại thì có bóng đổ, ánh đèn vàng, sáng không đều. Cách khử:
